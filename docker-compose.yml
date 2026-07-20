@@ -1,0 +1,90 @@
+# docker-compose.yml
+#
+# Runs three containers together:
+#   redis    — data store (sorted sets for time-series ping history)
+#   backend  — Node.js/Express + Socket.io API
+#   frontend — React app served by nginx
+#
+# Why docker-compose vs a plain Dockerfile?
+#   A Dockerfile describes ONE container. docker-compose orchestrates MULTIPLE
+#   containers as a unit — it handles networking between them, start-order
+#   dependencies (backend waits for Redis), shared volumes, and env vars.
+#   A single "docker-compose up" replaces manually running three "docker run"
+#   commands and wiring them together yourself.
+
+services:
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine          # pinned minor version for reproducibility
+    container_name: pulsewatch-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"                  # expose locally so you can inspect with redis-cli
+    volumes:
+      - redis-data:/data             # persist sorted sets across container restarts
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - pulsewatch-net
+
+  # ── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pulsewatch-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Environment variables keep secrets out of the image and let you
+      # change config (e.g. Redis host, Slack URL) without rebuilding.
+      PORT: "3000"
+      REDIS_HOST: redis              # Docker DNS: container name resolves automatically
+      REDIS_PORT: "6379"
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}   # optional; empty string = alerting disabled
+    depends_on:
+      redis:
+        condition: service_healthy   # wait for Redis healthcheck to pass before starting
+    networks:
+      - pulsewatch-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked into the React bundle at build time — points the browser at
+        # the backend's public address (localhost from the user's machine).
+        REACT_APP_BACKEND_URL: "http://localhost:3000"
+    container_name: pulsewatch-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    networks:
+      - pulsewatch-net
+
+# ── Shared network ─────────────────────────────────────────────────────────────
+# Containers on the same user-defined bridge network can reach each other by
+# service name (e.g. "redis", "backend") — Docker handles the DNS resolution.
+networks:
+  pulsewatch-net:
+    driver: bridge
+
+# ── Named volume ──────────────────────────────────────────────────────────────
+# Named volumes persist beyond the container lifecycle. If you remove and
+# recreate the redis container, your ping history survives.
+volumes:
+  redis-data:

@@ -7,6 +7,7 @@
  *   2. cors            — restricts which origins can make cross-origin requests
  *   3. cookie-parser   — parses httpOnly cookies for auth
  *   4. rate limiter    — 5 attempts / 15 min per IP on /api/auth/login
+ *                        10 attempts / 15 min per IP on /api/auth/register
  *   5. requireAuth     — verifies access token from httpOnly cookie
  *   6. requireRole     — server-side RBAC check (not just UI hiding)
  *   7. csrfProtect     — double-submit cookie on all mutating routes
@@ -29,14 +30,14 @@ const cookieParser = require("cookie-parser");
 const rateLimit    = require("express-rate-limit");
 
 const {
-  login, rotateRefreshToken, revokeRefreshToken,
+  login, register, rotateRefreshToken, revokeRefreshToken,
   requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
 } = require("./auth");
 
 const { pingUrl }               = require("./pinger");
-const { storeMetric, getRecentMetrics } = require("./redisClient");
-const { startPolling, onResult, getPollingState, getUrls } = require("./poller");
+const { storeMetric, getRecentMetrics, getHourlyBuckets, getIncidents } = require("./redisClient");
+const { startPolling, onResult, getPollingState, getOngoingOutages, getUrls } = require("./poller");
 const { addUrl, removeUrl }     = require("./endpointRegistry");
 const { initSocketHandler, broadcastMetric, broadcastPollingStats } = require("./socketHandler");
 
@@ -84,6 +85,18 @@ const loginLimiter = rateLimit({
   skipSuccessfulRequests: true,      // only count failures toward the limit
 });
 
+// Rate limiter for registration — prevents flooding the in-memory USERS array.
+// Slightly more generous than login (10 attempts) since registration is a one-time
+// action per user, but still limits abuse from a single IP.
+const registerLimiter = rateLimit({
+  windowMs:         15 * 60 * 1000, // 15 minute window
+  max:              10,              // 10 attempts per IP per window
+  standardHeaders:  true,
+  legacyHeaders:    false,
+  message:          { error: "Too many registration attempts. Try again in 15 minutes." },
+  skipSuccessfulRequests: true,
+});
+
 // ─── HTTP + Socket.io ─────────────────────────────────────────────────────────
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
@@ -98,21 +111,37 @@ initSocketHandler(io);
  * Validates credentials, sets httpOnly auth cookies, returns user info.
  * Rate-limited to 5 attempts / 15 min per IP.
  */
-app.post("/api/auth/login", loginLimiter, (req, res) => {
+app.post("/api/auth/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ error: "username and password are required" });
   }
   try {
-    const { accessToken, refreshToken, user } = login(username, password);
+    const { accessToken, refreshToken, user } = await login(username, password);
     setAuthCookies(res, accessToken, refreshToken);
-    // Return user info but NEVER return the tokens in the response body
-    // — they live only in httpOnly cookies
     return res.json({ user });
   } catch (err) {
-    // Preserve the lockout message verbatim; all other failures use generic text
     const isLockout = err.message.startsWith("Account locked");
     return res.status(401).json({ error: isLockout ? err.message : "Invalid credentials" });
+  }
+});
+
+/**
+ * POST /api/auth/register
+ * Creates a new guest account. Returns user info + sets auth cookies.
+ * Body: { username, password, name }
+ */
+app.post("/api/auth/register", registerLimiter, async (req, res) => {
+  const { username, password, name } = req.body || {};
+  if (!username || !password || !name) {
+    return res.status(400).json({ error: "Username, password and name are required" });
+  }
+  try {
+    const { accessToken, refreshToken, user } = await register(username, password, name);
+    setAuthCookies(res, accessToken, refreshToken);
+    return res.status(201).json({ user });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
 });
 
@@ -122,12 +151,12 @@ app.post("/api/auth/login", loginLimiter, (req, res) => {
  * No CSRF check here — this route only reads a cookie, produces another cookie,
  * and returns no data that could be used in a CSRF attack.
  */
-app.post("/api/auth/refresh", (req, res) => {
+app.post("/api/auth/refresh", async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
   if (!refreshToken) return res.status(401).json({ error: "No refresh token" });
 
   try {
-    const { accessToken, refreshToken: newRefresh, user } = rotateRefreshToken(refreshToken);
+    const { accessToken, refreshToken: newRefresh, user } = await rotateRefreshToken(refreshToken);
     setAuthCookies(res, accessToken, newRefresh);
     return res.json({ user });
   } catch (err) {
@@ -177,6 +206,7 @@ app.get("/api/public/status", async (_req, res) => {
     const services = await Promise.all(
       getUrls().map(async (url) => {
         const results   = await getRecentMetrics(url, 200);
+        const hourlyBuckets = await getHourlyBuckets(url, 90);
         const latest    = results[0] || null;
         const b24       = results.filter((r) => now - new Date(r.timestamp).getTime() < H24);
         const b7        = results.filter((r) => now - new Date(r.timestamp).getTime() < D7);
@@ -194,10 +224,41 @@ app.get("/api/public/status", async (_req, res) => {
           uptime7d:      upPct(b7),
           avgLatency24h: avgLat(b24),
           lastChecked:   latest?.timestamp ?? null,
+          hourlyBuckets, // array of 90 "up"|"down"|"unknown" entries, oldest→newest
         };
       })
     );
     res.json({ services, generatedAt: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/public/incidents
+ * Returns the last 10 resolved incidents per URL, plus any currently ongoing
+ * outages from in-memory poller state. No auth required (public status page).
+ *
+ * Response shape:
+ *   { incidents: [ { url, startedAt, resolvedAt, durationMs } | { url, startedAt, ongoing: true } ] }
+ *   Sorted newest-first by startedAt.
+ */
+app.get("/api/public/incidents", async (_req, res) => {
+  try {
+    const urls = getUrls();
+
+    // Fetch resolved incidents from Redis for every monitored URL
+    const resolved = (
+      await Promise.all(urls.map((url) => getIncidents(url, 10)))
+    ).flat();
+
+    // Merge in any currently-ongoing outages from poller in-memory state
+    const ongoing = getOngoingOutages();
+
+    // Combine, sort newest-first
+    const all = [...ongoing, ...resolved].sort((a, b) => b.startedAt - a.startedAt);
+
+    res.json({ incidents: all });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -281,9 +342,14 @@ httpServer.listen(PORT, () => {
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 const { client: redisClient } = require("./redisClient");
+const pgPool = require("./db/pool");
+
 async function shutdown(sig) {
   console.log(`[Server] ${sig} — shutting down`);
-  await redisClient.quit().catch(() => {});
+  await Promise.all([
+    redisClient.quit().catch(() => {}),
+    pgPool.end().catch(() => {}),
+  ]);
   process.exit(0);
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));

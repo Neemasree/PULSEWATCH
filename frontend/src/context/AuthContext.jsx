@@ -43,13 +43,19 @@ export function AuthProvider({ children }) {
     return u;
   }, []);
 
+  // Used after registration — cookies are already set by the server,
+  // so we just update local state without making a second login request.
+  const setLoggedInUser = useCallback((u) => {
+    setUser(u);
+  }, []);
+
   const logout = useCallback(async () => {
     await api.logout().catch(() => {});
     setUser(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, setLoggedInUser }}>
       {children}
     </AuthContext.Provider>
   );

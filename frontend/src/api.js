@@ -78,13 +78,15 @@ async function request(method, path, body, { skipRefresh = false, retrying = fal
 
 export const api = {
   // Auth routes — skipRefresh:true so 401 never triggers the refresh loop
-  login:   (u, p) => request("POST", "/api/auth/login",   { username: u, password: p }, { skipRefresh: true }),
-  refresh: ()     => request("POST", "/api/auth/refresh",  null,                         { skipRefresh: true }),
-  logout:  ()     => request("POST", "/api/auth/logout",   null,                         { skipRefresh: true }),
-  me:      ()     => request("GET",  "/api/auth/me",       null,                         { skipRefresh: true }),
+  login:    (u, p)      => request("POST", "/api/auth/login",    { username: u, password: p }, { skipRefresh: true }),
+  register: (u, p, n)   => request("POST", "/api/auth/register", { username: u, password: p, name: n }, { skipRefresh: true }),
+  refresh:  ()          => request("POST", "/api/auth/refresh",  null,                         { skipRefresh: true }),
+  logout:   ()          => request("POST", "/api/auth/logout",   null,                         { skipRefresh: true }),
+  me:       ()          => request("GET",  "/api/auth/me",       null,                         { skipRefresh: true }),
 
   // Public — no auth needed, but still no refresh loop
-  publicStatus: () => request("GET", "/api/public/status", null, { skipRefresh: true }),
+  publicStatus:    () => request("GET", "/api/public/status",    null, { skipRefresh: true }),
+  publicIncidents: () => request("GET", "/api/public/incidents", null, { skipRefresh: true }),
 
   // Data routes — 401 triggers silent refresh + retry
   pollingStats:   ()    => request("GET",    "/api/polling-stats"),

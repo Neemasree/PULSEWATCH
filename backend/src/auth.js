@@ -35,10 +35,18 @@
  * Both "user not found" and "wrong password" return the same generic message
  * and take the same code path (bcrypt compare still runs on a dummy hash so
  * timing is consistent — no timing oracle on username existence).
+ *
+ * ── User storage ─────────────────────────────────────────────────────────
+ * Users are persisted in PostgreSQL (see src/db/migrate.sql).
+ * The bcrypt, JWT, RBAC, and CSRF logic here is storage-agnostic — only
+ * the three DB helper functions (findByUsername, createUser, findById) touch
+ * the database. Swapping to a different DB only requires changing those three.
  */
 
 const jwt    = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto"); // built-in Node module — no install needed
+const pool   = require("./db/pool");
 
 // Separate secrets per token type
 const ACCESS_SECRET  = process.env.JWT_ACCESS_SECRET  || "pw-access-dev-secret-change-in-prod";
@@ -50,43 +58,70 @@ const REFRESH_EXPIRY = "7d";
 // Pre-computed: bcrypt.hashSync("__dummy__", 12)
 const DUMMY_HASH = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCi0KRSQ/4pJVuWzQN/mzYi";
 
-// ── In-memory user store (swap for DB in production) ─────────────────────────
-// Hashes are stored as literals (pre-computed offline with bcrypt cost 12).
-// We do NOT call bcrypt.hashSync at module load — that blocks the Node.js
-// event loop for ~2-3 seconds per hash, stalling every request on startup.
-//
-// To regenerate:
-//   node -e "const b=require('bcryptjs'); console.log(b.hashSync('admin123',12));"
-const USERS = [
-  {
-    id: "1",
-    username: "admin",
-    // bcrypt.hashSync("admin123", 12) — verified
-    passwordHash: "$2a$12$1wTTPDn0x4ZL6I9JfNWY3uou.466dAZlY1rfpC3i3frzF9KNwCSJy",
-    role: "admin",
-    name: "Admin User",
-  },
-  {
-    id: "2",
-    username: "guest",
-    // bcrypt.hashSync("guest123", 12) — verified
-    passwordHash: "$2a$12$DHvBf50EddlvdOlNjKgZXuA0yewFZ3HX/2ocGvQGZe5/S8PSm.jQ6",
-    role: "guest",
-    name: "Guest User",
-  },
-];
+// ── PostgreSQL user helpers ───────────────────────────────────────────────────
+// These are the ONLY three places that touch the database.
+// All other auth logic above and below them is storage-agnostic.
+
+/**
+ * Looks up a user by username (case-insensitive).
+ * Returns the row as { id, username, password_hash, role, name } or null.
+ * @param {string} username
+ * @returns {Promise<object|null>}
+ */
+async function findByUsername(username) {
+  const { rows } = await pool.query(
+    "SELECT id, username, password_hash, role, name FROM users WHERE lower(username) = lower($1)",
+    [username]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Looks up a user by their numeric id (stored as the JWT sub claim).
+ * Returns { id, username, role, name } or null.
+ * @param {string|number} id
+ * @returns {Promise<object|null>}
+ */
+async function findById(id) {
+  const { rows } = await pool.query(
+    "SELECT id, username, role, name FROM users WHERE id = $1",
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Inserts a new user and returns the created row.
+ * Username uniqueness is enforced by the UNIQUE constraint — the caller
+ * catches the constraint error and converts it to a generic message.
+ * @param {string} username
+ * @param {string} passwordHash  bcrypt hash, never plaintext
+ * @param {string} role          "guest" for all self-registered users
+ * @param {string} name          Display name
+ * @returns {Promise<{ id, username, role, name }>}
+ */
+async function createUser(username, passwordHash, role, name) {
+  const { rows } = await pool.query(
+    `INSERT INTO users (username, password_hash, role, name)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, username, role, name`,
+    [username, passwordHash, role, name]
+  );
+  return rows[0];
+}
 
 // ── Refresh token blacklist ───────────────────────────────────────────────────
 // Stores JTI (unique token ID) → expiry timestamp.
 // On every refresh, the old JTI is added here; tokens in this set are rejected
 // even if their signature is valid.
-// In production: use a Redis SET with TTL so the set doesn't grow unbounded.
+// In production: use a Redis SET with TTL so the set doesn't grow unbounded
+// across multiple server instances.
 const refreshBlacklist = new Map(); // jti → expiry ms
 
 function isBlacklisted(jti) {
   const exp = refreshBlacklist.get(jti);
   if (!exp) return false;
-  if (Date.now() > exp) { refreshBlacklist.delete(jti); return false; } // expired entry
+  if (Date.now() > exp) { refreshBlacklist.delete(jti); return false; }
   return true;
 }
 
@@ -98,8 +133,8 @@ function blacklist(jti, expMs) {
 // username → { failCount, lockedUntil }
 const lockouts = new Map();
 
-const MAX_FAILS    = 5;
-const LOCKOUT_MS   = 15 * 60 * 1000; // 15 minutes
+const MAX_FAILS  = 5;
+const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 function checkLockout(username) {
   const entry = lockouts.get(username);
@@ -116,7 +151,7 @@ function recordFailure(username) {
   entry.failCount++;
   if (entry.failCount >= MAX_FAILS) {
     entry.lockedUntil = Date.now() + LOCKOUT_MS;
-    entry.failCount   = 0; // reset so next window starts clean after lockout expires
+    entry.failCount   = 0;
   }
   lockouts.set(username, entry);
 }
@@ -128,22 +163,21 @@ function clearFailures(username) {
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
 function makeJti() {
-  // Simple unique ID — in production use crypto.randomUUID()
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return crypto.randomUUID();
 }
 
 function signAccessToken(user) {
   return jwt.sign(
-    { sub: user.id, username: user.username, role: user.role, name: user.name },
+    { sub: String(user.id), username: user.username, role: user.role, name: user.name },
     ACCESS_SECRET,
     { expiresIn: ACCESS_EXPIRY }
   );
 }
 
 function signRefreshToken(user) {
-  const jti = makeJti();
+  const jti   = makeJti();
   const token = jwt.sign(
-    { sub: user.id, jti },
+    { sub: String(user.id), jti },
     REFRESH_SECRET,
     { expiresIn: REFRESH_EXPIRY }
   );
@@ -154,52 +188,100 @@ function signRefreshToken(user) {
 
 /**
  * Validates credentials and returns signed token pair.
- * Throws with a generic "Invalid credentials" message on any failure so
- * callers cannot distinguish "no such user" from "wrong password".
+ * Now async because findByUsername() queries Postgres.
  *
  * @param {string} username
  * @param {string} password
- * @returns {{ accessToken, refreshToken, refreshJti, user }}
+ * @returns {Promise<{ accessToken, refreshToken, refreshJti, user }>}
  */
-function login(username, password) {
-  // Lockout check first
+async function login(username, password) {
+  // Lockout check — synchronous, no DB hit needed
   const lockMsg = checkLockout(username);
   if (lockMsg) throw new Error(lockMsg);
 
-  const user = USERS.find((u) => u.username === username);
+  const user = await findByUsername(username);
 
   // Always run bcrypt compare (even on dummy hash) to prevent timing oracle
-  const hash  = user ? user.passwordHash : DUMMY_HASH;
-  const valid = bcrypt.compareSync(password, hash);
+  const hash  = user ? user.password_hash : DUMMY_HASH;
+  const valid = await bcrypt.compare(password, hash);
 
   if (!user || !valid) {
-    // Only record failure against real usernames to prevent enumeration via
-    // lockout behaviour on non-existent accounts
     if (user) recordFailure(username);
-    throw new Error("Invalid credentials"); // same message always
+    throw new Error("Invalid credentials");
   }
 
   clearFailures(username);
 
-  const accessToken          = signAccessToken(user);
+  const accessToken                              = signAccessToken(user);
   const { token: refreshToken, jti: refreshJti } = signRefreshToken(user);
 
   return {
     accessToken,
     refreshToken,
     refreshJti,
-    user: { id: user.id, username: user.username, role: user.role, name: user.name },
+    user: { id: String(user.id), username: user.username, role: user.role, name: user.name },
   };
 }
 
 /**
- * Rotates a refresh token: verifies the old one, blacklists it, issues new pair.
- * Throws if the token is invalid, expired, or already blacklisted.
+ * Registers a new guest account, persisting to Postgres.
+ *
+ * @param {string} username
+ * @param {string} password
+ * @param {string} name
+ * @returns {Promise<{ accessToken, refreshToken, refreshJti, user }>}
+ */
+async function register(username, password, name) {
+  if (!username || !password || !name) {
+    throw new Error("Username, password and name are required");
+  }
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+    throw new Error("Username must be 3–20 characters (letters, numbers, underscore only)");
+  }
+  if (password.length < 8) {
+    throw new Error("Password must be at least 8 characters");
+  }
+  if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+    throw new Error("Password must contain at least one letter and one number");
+  }
+  if (name.trim().length < 2 || name.trim().length > 40) {
+    throw new Error("Name must be 2–40 characters");
+  }
+  if (username.toLowerCase() === "admin") {
+    throw new Error("Unable to register with those details");
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  let newUser;
+  try {
+    newUser = await createUser(username, passwordHash, "guest", name.trim());
+  } catch (err) {
+    // Postgres unique constraint violation code = 23505
+    if (err.code === "23505") {
+      throw new Error("Unable to register with those details");
+    }
+    throw err; // unexpected DB error — let it bubble
+  }
+
+  const accessToken                              = signAccessToken(newUser);
+  const { token: refreshToken, jti: refreshJti } = signRefreshToken(newUser);
+
+  return {
+    accessToken,
+    refreshToken,
+    refreshJti,
+    user: { id: String(newUser.id), username: newUser.username, role: newUser.role, name: newUser.name },
+  };
+}
+
+/**
+ * Rotates a refresh token — now async because findById() queries Postgres.
  *
  * @param {string} oldRefreshToken
- * @returns {{ accessToken, refreshToken, refreshJti }}
+ * @returns {Promise<{ accessToken, refreshToken, refreshJti, user }>}
  */
-function rotateRefreshToken(oldRefreshToken) {
+async function rotateRefreshToken(oldRefreshToken) {
   let payload;
   try {
     payload = jwt.verify(oldRefreshToken, REFRESH_SECRET);
@@ -208,28 +290,27 @@ function rotateRefreshToken(oldRefreshToken) {
   }
 
   if (isBlacklisted(payload.jti)) {
-    // Token reuse detected — this is a replay attack or the user
-    // logged out and is trying to reuse the old token.
     throw new Error("Refresh token already used");
   }
 
-  // Blacklist the old token for the remainder of its natural lifetime
   blacklist(payload.jti, payload.exp * 1000);
 
-  const user = USERS.find((u) => u.id === payload.sub);
+  const user = await findById(payload.sub);
   if (!user) throw new Error("User no longer exists");
 
-  const accessToken = signAccessToken(user);
+  const accessToken                              = signAccessToken(user);
   const { token: refreshToken, jti: refreshJti } = signRefreshToken(user);
 
-  return { accessToken, refreshToken, refreshJti, user: { id: user.id, username: user.username, role: user.role, name: user.name } };
+  return {
+    accessToken,
+    refreshToken,
+    refreshJti,
+    user: { id: String(user.id), username: user.username, role: user.role, name: user.name },
+  };
 }
 
 /**
  * Invalidates a refresh token JTI so logout is server-enforced.
- * Without this, clearing the cookie still leaves a valid 7-day token
- * that a stolen cookie could replay.
- *
  * @param {string} refreshToken
  */
 function revokeRefreshToken(refreshToken) {
@@ -237,7 +318,7 @@ function revokeRefreshToken(refreshToken) {
     const payload = jwt.verify(refreshToken, REFRESH_SECRET);
     blacklist(payload.jti, payload.exp * 1000);
   } catch {
-    // Token already expired or invalid — nothing to revoke, that's fine
+    // Already expired or invalid — nothing to revoke
   }
 }
 
@@ -257,6 +338,7 @@ function verifyAccessToken(token) {
  * requireAuth
  * Reads the access token from the httpOnly cookie "access_token".
  * Falls back to Authorization: Bearer header for API clients (curl, Postman).
+ * Synchronous — verifyAccessToken only does JWT signature check, no DB hit.
  */
 function requireAuth(req, res, next) {
   try {
@@ -289,25 +371,8 @@ function requireRole(role) {
 /**
  * csrfProtect
  * Double-submit cookie CSRF protection for state-changing routes.
- *
- * Flow:
- *   1. Server sets a plain (non-httpOnly) cookie "csrf_token" containing a
- *      random value when the client first authenticates.
- *   2. Client JS reads that cookie and sends it back as the
- *      "X-CSRF-Token" request header on every mutating request.
- *   3. Server verifies header === cookie value.
- *
- * Why does this work?
- *   A cross-origin page can trigger a form POST (CSRF attack) but it cannot
- *   READ the csrf_token cookie (same-origin policy) so it can't set the header.
- *   A same-origin page CAN read the cookie and set the header — so only
- *   legitimate requests from our own frontend pass.
- *
- * Note: SameSite=Strict on auth cookies already prevents most CSRF attacks;
- * this adds a second layer for defence-in-depth.
  */
 function csrfProtect(req, res, next) {
-  // Allow GET/HEAD/OPTIONS — they must be safe/idempotent by convention
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
 
   const cookieToken = req.cookies?.csrf_token;
@@ -323,11 +388,10 @@ function csrfProtect(req, res, next) {
 
 const IS_PROD = process.env.NODE_ENV === "production";
 
-/** Options for the httpOnly auth cookies */
 const AUTH_COOKIE_OPTS = {
-  httpOnly: true,                  // not readable by JS — blocks XSS token theft
-  secure:   IS_PROD,               // HTTPS only in production; allow HTTP in dev
-  sameSite: IS_PROD ? "strict" : "lax", // strict in prod; lax in dev (cross-port same-host)
+  httpOnly: true,
+  secure:   IS_PROD,
+  sameSite: IS_PROD ? "strict" : "lax",
   path:     "/",
 };
 
@@ -335,14 +399,13 @@ function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie("access_token",  accessToken,  { ...AUTH_COOKIE_OPTS, maxAge: 15 * 60 * 1000 });
   res.cookie("refresh_token", refreshToken, { ...AUTH_COOKIE_OPTS, maxAge: 7 * 24 * 60 * 60 * 1000 });
 
-  // CSRF token — deliberately NOT httpOnly so JS can read it
   const csrfToken = makeJti();
   res.cookie("csrf_token", csrfToken, {
     httpOnly: false,
     secure:   IS_PROD,
     sameSite: IS_PROD ? "strict" : "lax",
     path:     "/",
-    maxAge:   15 * 60 * 1000, // matches access token lifetime
+    maxAge:   15 * 60 * 1000,
   });
 }
 
@@ -353,8 +416,7 @@ function clearAuthCookies(res) {
 }
 
 module.exports = {
-  login, rotateRefreshToken, revokeRefreshToken,
+  login, register, rotateRefreshToken, revokeRefreshToken,
   verifyAccessToken, requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
-  USERS,
 };

@@ -12,7 +12,7 @@
  */
 
 const { pingUrl }        = require("./pinger");
-const { storeMetric }    = require("./redisClient");
+const { storeMetric, storeIncident } = require("./redisClient");
 const { detectAnomaly }  = require("./anomalyDetector");
 const { sendSlackAlert } = require("./alerts");
 const { getUrls, registry } = require("./endpointRegistry");
@@ -22,6 +22,21 @@ const INTERVAL_MAX_MS = 60_000;
 const INTERVAL_START  = 10_000;
 const INTERVAL_GROWTH = 1.5;
 const READINGS_WINDOW = 50;
+
+// ── Down-alert cooldown ───────────────────────────────────────────────────────
+// Tracks the last time a DOWN alert was sent per URL, separate from the
+// anomaly alert cooldown in alerts.js. Prevents spamming when a site stays down.
+const DOWN_ALERT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const lastDownAlertTime = new Map(); // url → timestamp ms
+
+function shouldSendDownAlert(url) {
+  const last = lastDownAlertTime.get(url) || 0;
+  return Date.now() - last > DOWN_ALERT_COOLDOWN_MS;
+}
+
+function recordDownAlert(url) {
+  lastDownAlertTime.set(url, Date.now());
+}
 
 // Per-URL runtime state
 const urlState = new Map();
@@ -34,7 +49,14 @@ function onResult(cb) { _onResultCb = cb; }
 
 // ─── Per-URL state factory ────────────────────────────────────────────────────
 function makeState() {
-  return { currentIntervalMs: INTERVAL_START, readings: [], checkCount: 0, timeoutHandle: null };
+  return {
+    currentIntervalMs: INTERVAL_START,
+    readings:          [],
+    checkCount:        0,
+    timeoutHandle:     null,
+    lastStatus:        null,  // "up" | "down" | null — tracks previous check
+    downSince:         null,  // ms timestamp when the current outage started, null if up
+  };
 }
 
 // ─── Core check loop ──────────────────────────────────────────────────────────
@@ -57,7 +79,43 @@ async function checkUrl(url) {
     console.error(`[Storage] ${err.message}`)
   );
 
+  // ── Anomaly alert (z-score spike) ─────────────────────────────────────────
   if (anomaly.isAnomaly) sendSlackAlert(url, result, anomaly.zScore);
+
+  // ── Down alert + incident tracking ────────────────────────────────────────
+  const wasUp   = state.lastStatus === "up";
+  const wasDown = state.lastStatus === "down";
+  const isDown  = result.status === "down";
+  const isUp    = result.status === "up";
+
+  if (isDown) {
+    // Record when this outage started (only on the first DOWN after an UP)
+    if (!wasDown) {
+      state.downSince = new Date(result.timestamp).getTime();
+      console.log(`[Incident] Outage started: ${url} at ${result.timestamp}`);
+    }
+    // Fire a DOWN Slack alert respecting the 5-min cooldown
+    if (shouldSendDownAlert(url)) {
+      recordDownAlert(url);
+      sendSlackAlert(url, result, null);
+      console.log(`[Alert] DOWN alert sent for ${url}`);
+    }
+  }
+
+  if (isUp && wasDown && state.downSince !== null) {
+    // DOWN → UP transition: persist a resolved incident record
+    const resolvedAt  = new Date(result.timestamp).getTime();
+    const durationMs  = resolvedAt - state.downSince;
+    const incident    = { url, startedAt: state.downSince, resolvedAt, durationMs };
+    storeIncident(incident).catch((err) =>
+      console.error(`[Incident] Failed to store: ${err.message}`)
+    );
+    console.log(`[Incident] Resolved: ${url} — duration ${(durationMs / 1000).toFixed(0)}s`);
+    state.downSince = null;
+  }
+
+  // Track status for next iteration
+  state.lastStatus = result.status;
 
   if (_onResultCb) _onResultCb(result, anomaly);
 
@@ -149,4 +207,19 @@ function getPollingState() {
 // Kept for backward compat — used by socketHandler
 const MONITORED_URLS = { get current() { return getUrls(); } };
 
-module.exports = { startPolling, stopPolling, onResult, getPollingState, MONITORED_URLS: null, getUrls };
+/**
+ * Returns any currently ongoing outages (DOWN with no recovery yet).
+ * Used by the incidents API to merge in-progress outages with resolved ones.
+ * @returns {Array<{url, startedAt, ongoing: true}>}
+ */
+function getOngoingOutages() {
+  const ongoing = [];
+  for (const [url, state] of urlState.entries()) {
+    if (state.lastStatus === "down" && state.downSince !== null) {
+      ongoing.push({ url, startedAt: state.downSince, ongoing: true });
+    }
+  }
+  return ongoing;
+}
+
+module.exports = { startPolling, stopPolling, onResult, getPollingState, getOngoingOutages, MONITORED_URLS: null, getUrls };

@@ -1,27 +1,27 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-
-const SECURITY_FEATURES = [
-  { icon: "🔐", label: "bcrypt-12 password hashing" },
-  { icon: "🍪", label: "httpOnly cookies — no XSS token theft" },
-  { icon: "🔄", label: "Refresh token rotation & blacklist" },
-  { icon: "🛡️", label: "Rate limiting + account lockout" },
-  { icon: "🚦", label: "CSRF double-submit protection" },
-  { icon: "👤", label: "Server-enforced RBAC" },
-];
+import { api } from "../api";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, setLoggedInUser } = useAuth();
   const navigate  = useNavigate();
 
+  const [mode, setMode] = useState("signin"); // "signin" | "register"
+
+  // Sign In fields
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
+  // Register-only fields
+  const [name, setName] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   const [error,    setError]    = useState("");
   const [loading,  setLoading]  = useState(false);
   const [showPwd,  setShowPwd]  = useState(false);
 
-  async function handleSubmit(e) {
+  async function handleSignIn(e) {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -35,14 +35,33 @@ export default function LoginPage() {
     }
   }
 
-  async function handleGuest() {
+  async function handleRegister(e) {
+    e.preventDefault();
     setError("");
+
+    // Client-side validation
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters");
+      return;
+    }
+    if (!/\d/.test(password) || !/[a-zA-Z]/.test(password)) {
+      setError("Password must contain at least 1 letter and 1 number");
+      return;
+    }
+
     setLoading(true);
     try {
-      await login("guest", "guest123");
+      // api.register() already sets auth cookies on the server and returns the user.
+      // Call setLoggedInUser() directly — no second round-trip to /api/auth/login needed.
+      const { user } = await api.register(username, password, name);
+      setLoggedInUser(user);
       navigate("/dashboard", { replace: true });
     } catch (err) {
-      setError(err.message || "Guest login failed");
+      setError(err.message || "Registration failed");
     } finally {
       setLoading(false);
     }
@@ -52,24 +71,24 @@ export default function LoginPage() {
     <div style={s.page}>
       <div style={s.grid}>
 
-        {/* ── Left panel: feature list ─────────────────────────────── */}
+        {/* ── Left panel: branding ─────────────────────────────────── */}
         <div style={s.left}>
           <div style={s.brand}>
             <span style={s.brandIcon}>⚡</span>
             <span style={s.brandText}>PulseWatch</span>
           </div>
           <p style={s.brandSub}>
-            Real-time uptime monitoring with adaptive polling &amp; anomaly detection
+            Production-grade uptime monitoring with adaptive polling, anomaly detection,
+            and real-time alerts
           </p>
 
           <div style={s.featureList}>
-            <div style={s.featureHeading}>Security features</div>
-            {SECURITY_FEATURES.map(({ icon, label }) => (
-              <div key={label} style={s.featureRow}>
-                <span style={s.featureIcon}>{icon}</span>
-                <span style={s.featureLabel}>{label}</span>
-              </div>
-            ))}
+            <FeatureDot label="JWT auth with refresh token rotation" />
+            <FeatureDot label="Role-based access control (RBAC)" />
+            <FeatureDot label="Adaptive polling (5s–60s)" />
+            <FeatureDot label="Z-score anomaly detection" />
+            <FeatureDot label="WebSocket real-time updates" />
+            <FeatureDot label="Public status page" />
           </div>
 
           <Link to="/status" style={s.statusLink}>
@@ -78,27 +97,72 @@ export default function LoginPage() {
           </Link>
         </div>
 
-        {/* ── Right panel: login form ──────────────────────────────── */}
+        {/* ── Right panel: form ────────────────────────────────────── */}
         <div style={s.card}>
-          <h1 style={s.h1}>Sign in</h1>
-          <p style={s.h1Sub}>to your PulseWatch dashboard</p>
+          {/* Tab toggle */}
+          <div style={s.tabBar}>
+            <button
+              type="button"
+              style={s.tab(mode === "signin")}
+              onClick={() => {
+                setMode("signin");
+                setError("");
+                setName("");
+                setConfirmPassword("");
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              style={s.tab(mode === "register")}
+              onClick={() => {
+                setMode("register");
+                setError("");
+              }}
+            >
+              Register
+            </button>
+          </div>
 
-          <form onSubmit={handleSubmit} style={s.form}>
+          <h1 style={s.h1}>
+            {mode === "signin" ? "Welcome back" : "Create account"}
+          </h1>
+          <p style={s.h1Sub}>
+            {mode === "signin"
+              ? "Sign in to access your dashboard"
+              : "Register to start monitoring your endpoints"}
+          </p>
+
+          <form onSubmit={mode === "signin" ? handleSignIn : handleRegister} style={s.form}>
             <Field label="Username" id="username">
               <input
                 id="username" style={s.input}
                 type="text" autoComplete="username"
                 value={username} onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin or guest" required
+                placeholder={mode === "signin" ? "Enter username" : "Choose a username"}
+                required
               />
             </Field>
+
+            {mode === "register" && (
+              <Field label="Full Name" id="name">
+                <input
+                  id="name" style={s.input}
+                  type="text" autoComplete="name"
+                  value={name} onChange={(e) => setName(e.target.value)}
+                  placeholder="Your full name"
+                  required
+                />
+              </Field>
+            )}
 
             <Field label="Password" id="password">
               <div style={s.pwdWrap}>
                 <input
                   id="password" style={{ ...s.input, paddingRight: "44px" }}
                   type={showPwd ? "text" : "password"}
-                  autoComplete="current-password"
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
                   value={password} onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••" required
                 />
@@ -111,6 +175,18 @@ export default function LoginPage() {
               </div>
             </Field>
 
+            {mode === "register" && (
+              <Field label="Confirm Password" id="confirmPassword">
+                <input
+                  id="confirmPassword" style={s.input}
+                  type={showPwd ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••" required
+                />
+              </Field>
+            )}
+
             {error && (
               <div style={s.errorBox} role="alert">
                 <span style={s.errorIcon}>⚠</span>
@@ -122,27 +198,11 @@ export default function LoginPage() {
               style={{ ...s.primaryBtn, opacity: loading ? 0.7 : 1 }}
               type="submit" disabled={loading}
             >
-              {loading ? "Signing in…" : "Sign in"}
-            </button>
-
-            <div style={s.divider}><span>or</span></div>
-
-            <button
-              type="button"
-              style={{ ...s.ghostBtn, opacity: loading ? 0.7 : 1 }}
-              onClick={handleGuest} disabled={loading}
-            >
-              Continue as Guest
-              <span style={s.guestBadge}>read-only</span>
+              {loading
+                ? (mode === "signin" ? "Signing in…" : "Creating account…")
+                : (mode === "signin" ? "Sign in" : "Create account")}
             </button>
           </form>
-
-          {/* Demo credentials */}
-          <div style={s.credsBox}>
-            <div style={s.credsTitle}>Demo credentials</div>
-            <CredRow role="admin" cred="admin / admin123" note="full control" />
-            <CredRow role="guest" cred="guest / guest123" note="read-only" />
-          </div>
         </div>
       </div>
     </div>
@@ -158,13 +218,11 @@ function Field({ label, id, children }) {
   );
 }
 
-function CredRow({ role, cred, note }) {
-  const isAdmin = role === "admin";
+function FeatureDot({ label }) {
   return (
-    <div style={s.credRow}>
-      <span style={s.credRole(isAdmin)}>{role}</span>
-      <code style={s.credCode}>{cred}</code>
-      <span style={s.credNote}>{note}</span>
+    <div style={s.featureRow}>
+      <span style={s.featureDot} />
+      <span style={s.featureLabel}>{label}</span>
     </div>
   );
 }
@@ -197,12 +255,14 @@ const s = {
   brand:    { display:"flex", alignItems:"center", gap:"10px" },
   brandIcon:{ fontSize:"24px" },
   brandText:{ fontSize:"20px", fontWeight:800, color:"#4FD1C5", letterSpacing:"-0.02em" },
-  brandSub: { fontSize:"13px", color:"#3d4a5c", lineHeight:1.6, marginTop:"-12px" },
-  featureList:    { display:"flex", flexDirection:"column", gap:"10px" },
-  featureHeading: { fontSize:"10px", color:"#2d3748", textTransform:"uppercase", letterSpacing:"0.1em", marginBottom:"2px" },
+  brandSub: { fontSize:"13px", color:"#5a6478", lineHeight:1.6, marginTop:"-12px" },
+  featureList: { display:"flex", flexDirection:"column", gap:"10px", marginTop:"8px" },
   featureRow:  { display:"flex", alignItems:"center", gap:"10px" },
-  featureIcon: { fontSize:"14px", flexShrink:0 },
-  featureLabel:{ fontSize:"12px", color:"#5a6478" },
+  featureDot:  {
+    width:6, height:6, borderRadius:"50%",
+    background:"#4FD1C5", flexShrink:0,
+  },
+  featureLabel:{ fontSize:"12px", color:"#5a6478", lineHeight:1.5 },
   statusLink: {
     display:"flex", alignItems:"center", gap:"8px",
     fontSize:"12px", color:"#4FD1C5", textDecoration:"none",
@@ -219,6 +279,18 @@ const s = {
     padding: "40px 36px",
     display: "flex", flexDirection: "column", gap: "20px",
   },
+  tabBar: {
+    display:"flex", gap:"4px",
+    background:"#0f1420", borderRadius:"10px",
+    padding:"4px",
+  },
+  tab: (active) => ({
+    flex:1, background: active ? "#1e2535" : "transparent",
+    border:"none", borderRadius:"7px",
+    padding:"10px", fontSize:"13px", fontWeight:600,
+    color: active ? "#e2e8f0" : "#3d4a5c",
+    cursor:"pointer", transition:"all 0.15s",
+  }),
   h1:    { fontSize:"22px", fontWeight:800, color:"#e2e8f0", margin:0 },
   h1Sub: { fontSize:"13px", color:"#3d4a5c", marginTop:"-12px" },
   form:  { display:"flex", flexDirection:"column", gap:"16px" },
@@ -250,42 +322,4 @@ const s = {
     cursor:"pointer", transition:"opacity 0.15s",
     letterSpacing:"0.01em",
   },
-  divider: {
-    display:"flex", alignItems:"center", gap:"12px",
-    color:"#1e2535", fontSize:"12px",
-    "::before": { content:'""', flex:1, height:"1px", background:"#1e2535" },
-    "::after":  { content:'""', flex:1, height:"1px", background:"#1e2535" },
-  },
-  ghostBtn: {
-    display:"flex", alignItems:"center", justifyContent:"center", gap:"10px",
-    background:"transparent", color:"#5a6478",
-    border:"1px solid #1e2535", borderRadius:"8px",
-    padding:"11px", fontSize:"13px", fontWeight:600,
-    cursor:"pointer", transition:"border-color 0.15s, color 0.15s",
-  },
-  guestBadge: {
-    fontSize:"10px", fontWeight:700, letterSpacing:"0.06em",
-    background:"#1e2535", color:"#4a5568",
-    padding:"1px 6px", borderRadius:"4px",
-  },
-  credsBox:  {
-    background:"#0f1420", border:"1px solid #1e2535",
-    borderRadius:"10px", padding:"14px 16px",
-    display:"flex", flexDirection:"column", gap:"8px",
-  },
-  credsTitle: { fontSize:"10px", color:"#3d4a5c", textTransform:"uppercase", letterSpacing:"0.08em" },
-  credRow:    { display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap" },
-  credRole:   (isAdmin) => ({
-    fontSize:"10px", fontWeight:700,
-    padding:"2px 7px", borderRadius:"4px",
-    background: isAdmin ? "#22543d" : "#1e2535",
-    color:      isAdmin ? "#68d391" : "#4a5568",
-    flexShrink:0,
-  }),
-  credCode: {
-    fontSize:"12px", fontFamily:"monospace",
-    background:"#1e2535", color:"#c8d0e0",
-    padding:"1px 6px", borderRadius:"4px",
-  },
-  credNote: { fontSize:"11px", color:"#3d4a5c" },
 };

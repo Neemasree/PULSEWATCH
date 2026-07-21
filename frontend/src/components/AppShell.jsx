@@ -2,11 +2,6 @@ import React, { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-const NAV = [
-  { to: "/dashboard", icon: "◈", label: "Dashboard" },
-  { to: "/status",    icon: "◉", label: "Status Page", blank: true },
-];
-
 export default function AppShell({ connected, children }) {
   const { user, logout } = useAuth();
   const navigate         = useNavigate();
@@ -39,21 +34,34 @@ export default function AppShell({ connected, children }) {
         </div>
 
         <nav style={s.nav} aria-label="Main navigation">
-          {NAV.map(({ to, icon, label, blank }) => (
-            <NavLink key={to} to={to}
-              target={blank ? "_blank" : undefined}
-              rel={blank ? "noopener noreferrer" : undefined}
-              style={({ isActive }) => ({
-                ...s.navLink,
-                background: isActive ? "rgba(79,209,197,0.1)" : "transparent",
-                color:      isActive ? "#4FD1C5" : "#5a6478",
-                borderLeft: `2px solid ${isActive ? "#4FD1C5" : "transparent"}`,
-              })}
-            >
-              <span style={s.navIcon}>{icon}</span>
-              {!collapsed && <span style={s.navLabel}>{label}</span>}
-            </NavLink>
-          ))}
+          {/* Dashboard — internal React Router link */}
+          <NavLink to="/dashboard"
+            style={({ isActive }) => ({
+              ...s.navLink,
+              background: isActive ? "rgba(79,209,197,0.1)" : "transparent",
+              color:      isActive ? "#4FD1C5" : "#5a6478",
+              borderLeft: `2px solid ${isActive ? "#4FD1C5" : "transparent"}`,
+            })}
+          >
+            <span style={s.navIcon}>◈</span>
+            {!collapsed && <span style={s.navLabel}>Dashboard</span>}
+          </NavLink>
+
+          {/* Status Page — plain anchor so it always opens a new tab, never triggers React Router */}
+          <a
+            href="/status"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ ...s.navLink, color: "#5a6478", borderLeft: "2px solid transparent", textDecoration: "none" }}
+          >
+            <span style={s.navIcon}>◉</span>
+            {!collapsed && (
+              <span style={{ display:"flex", alignItems:"center", gap:"6px" }}>
+                <span style={s.navLabel}>Status Page</span>
+                <span style={s.extBadge}>↗</span>
+              </span>
+            )}
+          </a>
         </nav>
 
         <div style={{ flex:1 }} />
@@ -123,6 +131,7 @@ const s = {
   },
   navIcon:  { fontSize:"14px", flexShrink:0, width:18, textAlign:"center" },
   navLabel: { whiteSpace:"nowrap" },
+  extBadge: { fontSize:"9px", color:"#3d4a5c" },
   userCard: {
     display:"flex", alignItems:"center", gap:"10px",
     padding:"12px 14px", borderTop:"1px solid #1e2535",

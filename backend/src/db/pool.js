@@ -28,10 +28,9 @@ const pool = new Pool({
   max:                    10,
   idleTimeoutMillis:  30_000,
   connectionTimeoutMillis: 5_000,
-  // Required for SSL on hosted providers (Railway, Supabase, Render).
-  // rejectUnauthorized:false accepts self-signed certs — fine for free tiers,
-  // set to true in production with a valid cert chain.
-  ssl: process.env.DATABASE_URL?.startsWith("postgresql")
+  // Only use SSL for hosted providers (non-localhost).
+  // Local Postgres doesn't have SSL enabled by default.
+  ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes("localhost")
     ? { rejectUnauthorized: false }
     : false,
 });

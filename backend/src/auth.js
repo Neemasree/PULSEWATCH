@@ -56,7 +56,7 @@ const REFRESH_EXPIRY = "7d";
 
 // ── Dummy hash — used when username not found so timing looks identical ──────
 // Pre-computed: bcrypt.hashSync("__dummy__", 12)
-const DUMMY_HASH = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCi0KRSQ/4pJVuWzQN/mzYi";
+const DUMMY_HASH = "$2a$12$07m3EJsWY2T7cAG6iESgiu/CqthjPb/SuxWbB0NLUu.QcEtAZZCme";
 
 // ── PostgreSQL user helpers ───────────────────────────────────────────────────
 // These are the ONLY three places that touch the database.

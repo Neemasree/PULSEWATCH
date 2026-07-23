@@ -24,7 +24,7 @@ INSERT INTO users (id, username, password_hash, role, name)
 VALUES (
   1,
   'admin',
-  '$2a$12$1wTTPDn0x4ZL6I9JfNWY3uou.466dAZlY1rfpC3i3frzF9KNwCSJy',
+  '$2a$12$VcE5NzZRTU6uDxvgIwwqIezVfYGWE1TsnE8NcVW2k4p.Bm96ZWve2',
   'admin',
   'Admin User'
 ) ON CONFLICT (username) DO NOTHING;

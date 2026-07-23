@@ -192,6 +192,7 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
 
 app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/health",     (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+app.get("/api/debug/cors", (_req, res) => res.json({ allowedOrigins: ALLOWED_ORIGINS }));
 
 /**
  * GET /api/public/status

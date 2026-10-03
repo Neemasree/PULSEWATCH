@@ -25,6 +25,8 @@ COPY --from=deps /app/node_modules ./node_modules
 
 # Copy application source
 COPY src ./src
+COPY scripts ./scripts
+COPY migrations ./migrations
 
 # Switch to non-root before the process starts
 USER pulsewatch

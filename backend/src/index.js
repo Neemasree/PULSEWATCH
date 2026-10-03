@@ -37,8 +37,10 @@ const {
 
 const { pingUrl }               = require("./pinger");
 const { storeMetric, getRecentMetrics, getHourlyBuckets, getIncidents } = require("./redisClient");
-const { startPolling, onResult, getPollingState, getOngoingOutages, getUrls } = require("./poller");
-const { addUrl, removeUrl }     = require("./endpointRegistry");
+const { startPolling, onResult, getPollingState, getOngoingOutages, getMonitorsForUser } = require("./poller");
+const { loadFromDb, getPublicMonitors } = require("./endpointRegistry");
+const { runMigrations }         = require("../scripts/migrate");
+const monitorsRouter            = require("./monitorsRouter");
 const { initSocketHandler, broadcastMetric, broadcastPollingStats } = require("./socketHandler");
 
 const PORT = process.env.PORT || 3000;
@@ -103,6 +105,7 @@ const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, credentials: true, methods: ["GET", "POST"] },
 });
 initSocketHandler(io);
+app.set("io", io);
 
 // ─── Auth routes (public — no requireAuth) ────────────────────────────────────
 
@@ -171,9 +174,9 @@ app.post("/api/auth/refresh", async (req, res) => {
  * Without server-side blacklisting, clearing the cookie still leaves a valid
  * 7-day token that a stolen cookie could replay.
  */
-app.post("/api/auth/logout", (req, res) => {
+app.post("/api/auth/logout", async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
-  if (refreshToken) revokeRefreshToken(refreshToken);
+  if (refreshToken) await revokeRefreshToken(refreshToken);
   clearAuthCookies(res);
   return res.json({ message: "Logged out" });
 });
@@ -205,27 +208,25 @@ app.get("/api/public/status", async (_req, res) => {
     const D7  = 7 * H24;
 
     const services = await Promise.all(
-      getUrls().map(async (url) => {
-        const results   = await getRecentMetrics(url, 200);
-        const hourlyBuckets = await getHourlyBuckets(url, 90);
-        const latest    = results[0] || null;
-        const b24       = results.filter((r) => now - new Date(r.timestamp).getTime() < H24);
-        const b7        = results.filter((r) => now - new Date(r.timestamp).getTime() < D7);
-        const upPct     = (bucket) => bucket.length
-          ? parseFloat(((bucket.filter((r) => r.status === "up").length / bucket.length) * 100).toFixed(2))
-          : null;
-        const avgLat    = (bucket) => bucket.length
-          ? Math.round(bucket.reduce((s, r) => s + (r.responseTime || 0), 0) / bucket.length)
-          : null;
+      getPublicMonitors().map(async (monitor) => {
+        const results       = await getRecentMetrics(monitor.id, 200);
+        const hourlyBuckets = await getHourlyBuckets(monitor.id, 90);
+        const latest        = results[0] || null;
+        const b24 = results.filter((r) => now - new Date(r.timestamp).getTime() < H24);
+        const b7  = results.filter((r) => now - new Date(r.timestamp).getTime() < D7);
+        const upPct  = (b) => b.length ? parseFloat(((b.filter((r) => r.status === "up").length / b.length) * 100).toFixed(2)) : null;
+        const avgLat = (b) => b.length ? Math.round(b.reduce((s, r) => s + (r.responseTime || 0), 0) / b.length) : null;
         return {
-          url,
+          monitorId:     monitor.id,
+          url:           monitor.url,
+          name:          monitor.name,
           currentStatus: latest?.status ?? "unknown",
           latency:       latest?.responseTime ?? null,
           uptime24h:     upPct(b24),
           uptime7d:      upPct(b7),
           avgLatency24h: avgLat(b24),
           lastChecked:   latest?.timestamp ?? null,
-          hourlyBuckets, // array of 90 "up"|"down"|"unknown" entries, oldest→newest
+          hourlyBuckets,
         };
       })
     );
@@ -246,19 +247,12 @@ app.get("/api/public/status", async (_req, res) => {
  */
 app.get("/api/public/incidents", async (_req, res) => {
   try {
-    const urls = getUrls();
-
-    // Fetch resolved incidents from Redis for every monitored URL
+    const publicMonitors = getPublicMonitors();
     const resolved = (
-      await Promise.all(urls.map((url) => getIncidents(url, 10)))
+      await Promise.all(publicMonitors.map((m) => getIncidents(m.id, 10)))
     ).flat();
-
-    // Merge in any currently-ongoing outages from poller in-memory state
     const ongoing = getOngoingOutages();
-
-    // Combine, sort newest-first
     const all = [...ongoing, ...resolved].sort((a, b) => b.startedAt - a.startedAt);
-
     res.json({ incidents: all });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -266,6 +260,9 @@ app.get("/api/public/incidents", async (_req, res) => {
 });
 
 // ─── Authenticated routes ─────────────────────────────────────────────────────
+
+// Monitors CRUD API
+app.use("/api/monitors", monitorsRouter);
 
 app.get("/api/check", requireAuth, async (req, res) => {
   const { url } = req.query;
@@ -280,11 +277,17 @@ app.get("/api/check", requireAuth, async (req, res) => {
 });
 
 app.get("/api/history", requireAuth, async (req, res) => {
-  const { url } = req.query;
+  const monitorId = parseInt(req.query.monitorId, 10);
   const n = Math.min(parseInt(req.query.n || "20", 10), 500);
-  if (!url) return res.status(400).json({ error: '"url" is required' });
+  if (isNaN(monitorId)) return res.status(400).json({ error: '"monitorId" is required' });
+
+  const isAdmin  = req.user.role === "admin";
+  const monitors = getMonitorsForUser(req.user.sub, isAdmin);
+  const monitor  = monitors.find((m) => m.id === monitorId);
+  if (!monitor) return res.status(403).json({ error: "Forbidden" });
+
   try {
-    return res.json({ url, results: await getRecentMetrics(url, n) });
+    return res.json({ monitorId, url: monitor.url, results: await getRecentMetrics(monitorId, n) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -292,40 +295,20 @@ app.get("/api/history", requireAuth, async (req, res) => {
 
 app.get("/api/status", requireAuth, async (req, res) => {
   try {
-    const latest = {};
-    await Promise.all(getUrls().map(async (url) => {
-      const [r] = await getRecentMetrics(url, 1);
-      latest[url] = r || null;
+    const isAdmin  = req.user.role === "admin";
+    const monitors = getMonitorsForUser(req.user.sub, isAdmin);
+    const latest   = {};
+    await Promise.all(monitors.map(async (m) => {
+      const [r] = await getRecentMetrics(m.id, 1);
+      latest[m.id] = { monitor: m, result: r || null };
     }));
-    return res.json({ urls: latest, polling: getPollingState() });
+    return res.json({ monitors: latest, polling: getPollingState() });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/polling-stats", requireAuth, (_req, res) => res.json(getPollingState()));
-
-app.get("/api/endpoints", requireAuth, (_req, res) => res.json({ urls: getUrls() }));
-
-// Admin-only mutating routes: requireAuth + requireRole + csrfProtect
-app.post("/api/endpoints", requireAuth, requireRole("admin"), csrfProtect, (req, res) => {
-  const { url } = req.body || {};
-  if (!url) return res.status(400).json({ error: '"url" is required' });
-  try { new URL(url); } catch { return res.status(400).json({ error: "Invalid URL" }); }
-  const added = addUrl(url);
-  if (!added) return res.status(409).json({ error: "URL already monitored" });
-  io.emit("endpoints-updated", { urls: getUrls() });
-  return res.status(201).json({ message: "URL added", urls: getUrls() });
-});
-
-app.delete("/api/endpoints", requireAuth, requireRole("admin"), csrfProtect, (req, res) => {
-  const { url } = req.body || {};
-  if (!url) return res.status(400).json({ error: '"url" is required' });
-  const removed = removeUrl(url);
-  if (!removed) return res.status(404).json({ error: "URL not found" });
-  io.emit("endpoints-updated", { urls: getUrls() });
-  return res.json({ message: "URL removed", urls: getUrls() });
-});
 
 // ─── Poller → Socket.io bridge ────────────────────────────────────────────────
 onResult((result, anomaly) => {
@@ -334,12 +317,25 @@ onResult((result, anomaly) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-httpServer.listen(PORT, () => {
-  console.log(`[Server] PulseWatch on http://localhost:${PORT}`);
-  console.log(`[Server] CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
-  console.log(`[Server] Production mode: ${IS_PROD}`);
-  startPolling();
-});
+async function startServer() {
+  try {
+    await runMigrations();
+    await loadFromDb();
+    httpServer.listen(PORT, () => {
+      console.log(`[Server] PulseWatch on http://localhost:${PORT}`);
+      console.log(`[Server] CORS origins: ${ALLOWED_ORIGINS.join(", ")}`);
+      console.log(`[Server] Production mode: ${IS_PROD}`);
+      startPolling();
+    });
+  } catch (err) {
+    console.error("[Server] Startup failed:", err);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  startServer();
+}
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 const { client: redisClient } = require("./redisClient");
@@ -355,3 +351,5 @@ async function shutdown(sig) {
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT",  () => shutdown("SIGINT"));
+
+module.exports = { app, httpServer, startServer };

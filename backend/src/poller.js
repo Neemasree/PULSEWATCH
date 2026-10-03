@@ -1,45 +1,39 @@
 /**
  * poller.js
- * Adaptive polling engine — each URL runs its own recursive setTimeout loop.
+ * Adaptive polling engine — one independent loop per monitor (keyed by monitorId).
  *
- * Algorithm (TCP congestion control analogy):
- *   Healthy → interval × 1.5  (gradual back-off, capped at 60 s)
- *   Anomaly / down → reset to 5 s  (sharp response, maximum visibility)
+ * Adaptive interval rules (Phase 1.5):
+ *   base        = monitor.interval_seconds * 1000  (minimum 5 s, from DB)
+ *   INTERVAL_MAX = max(60 000, base)               (never less than 60 s ceiling)
+ *   start       = base
+ *   healthy     → next = min(current × 1.5, INTERVAL_MAX)
+ *   anomalous or down → next = base  (reset to monitor's own base, not a global 5 s)
  *
- * Dynamically responds to endpoint registry events:
- *   "added"   → immediately starts polling the new URL
- *   "removed" → cancels the timeout for that URL
+ * "Up" definition:
+ *   result.httpStatus === monitor.expected_status
+ *   (not just < 400 — a 404 is "down" if expected_status is 200)
+ *
+ * On edit (notifyMonitorUpdated):
+ *   - If interval_seconds changed → reset adaptive state (new base, new current)
+ *   - If only other fields changed → preserve current adaptive state
+ *   - downSince is always preserved across pause/resume
  */
 
 const { pingUrl }        = require("./pinger");
 const { storeMetric, storeIncident } = require("./redisClient");
 const { detectAnomaly }  = require("./anomalyDetector");
 const { sendSlackAlert } = require("./alerts");
-const { getUrls, registry } = require("./endpointRegistry");
+const { getActiveMonitors, getPublicMonitors, registry } = require("./endpointRegistry");
 
-const INTERVAL_MIN_MS = 5_000;
-const INTERVAL_MAX_MS = 60_000;
-const INTERVAL_START  = 10_000;
 const INTERVAL_GROWTH = 1.5;
 const READINGS_WINDOW = 50;
+const DOWN_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
-// ── Down-alert cooldown ───────────────────────────────────────────────────────
-// Tracks the last time a DOWN alert was sent per URL, separate from the
-// anomaly alert cooldown in alerts.js. Prevents spamming when a site stays down.
-const DOWN_ALERT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
-const lastDownAlertTime = new Map(); // url → timestamp ms
+// monitorId → { baseIntervalMs, currentIntervalMs, readings, checkCount,
+//               timeoutHandle, lastStatus, downSince, expectedStatus }
+const monitorState = new Map();
 
-function shouldSendDownAlert(url) {
-  const last = lastDownAlertTime.get(url) || 0;
-  return Date.now() - last > DOWN_ALERT_COOLDOWN_MS;
-}
-
-function recordDownAlert(url) {
-  lastDownAlertTime.set(url, Date.now());
-}
-
-// Per-URL runtime state
-const urlState = new Map();
+const lastDownAlertTime = new Map(); // monitorId → ms
 
 let pollingStartTime    = null;
 let totalAdaptiveChecks = 0;
@@ -47,25 +41,53 @@ let _onResultCb         = null;
 
 function onResult(cb) { _onResultCb = cb; }
 
-// ─── Per-URL state factory ────────────────────────────────────────────────────
-function makeState() {
+function baseInterval(monitor) {
+  return Math.max(5_000, (monitor.interval_seconds || 10) * 1000);
+}
+
+function maxInterval(base) {
+  return Math.max(60_000, base);
+}
+
+function makeState(monitor, preserveDownSince = null) {
+  const base = baseInterval(monitor);
   return {
-    currentIntervalMs: INTERVAL_START,
+    baseIntervalMs:    base,
+    currentIntervalMs: base,
+    expectedStatus:    monitor.expected_status ?? 200,
     readings:          [],
     checkCount:        0,
     timeoutHandle:     null,
-    lastStatus:        null,  // "up" | "down" | null — tracks previous check
-    downSince:         null,  // ms timestamp when the current outage started, null if up
+    lastStatus:        null,
+    downSince:         preserveDownSince,
   };
 }
 
 // ─── Core check loop ──────────────────────────────────────────────────────────
-async function checkUrl(url) {
-  // If URL was removed while we were awaiting, just stop
-  if (!urlState.has(url)) return;
 
-  const state  = urlState.get(url);
-  const result = await pingUrl(url);
+async function checkMonitor(monitorId) {
+  if (!monitorState.has(monitorId)) return;
+
+  const state   = monitorState.get(monitorId);
+  const monitor = getActiveMonitors().find((m) => m.id === monitorId);
+
+  // Monitor was removed from registry while we were awaiting
+  if (!monitor) {
+    monitorState.delete(monitorId);
+    return;
+  }
+
+  const raw = await pingUrl(monitor.url);
+
+  // Override status based on expected_status
+  const isExpected = raw.httpStatus === state.expectedStatus;
+  const result = {
+    ...raw,
+    monitorId,
+    url: monitor.url,
+    status: (raw.httpStatus !== null && isExpected) ? "up" : "down",
+  };
+
   state.checkCount++;
   totalAdaptiveChecks++;
 
@@ -75,151 +97,187 @@ async function checkUrl(url) {
   const anomaly  = detectAnomaly(state.readings.slice(0, -1), result.responseTime);
   result.anomaly = anomaly;
 
-  await storeMetric(url, result).catch((err) =>
+  await storeMetric(monitorId, result).catch((err) =>
     console.error(`[Storage] ${err.message}`)
   );
 
-  // ── Anomaly alert (z-score spike) ─────────────────────────────────────────
-  if (anomaly.isAnomaly) sendSlackAlert(url, result, anomaly.zScore);
+  if (anomaly.isAnomaly) sendSlackAlert(monitor.url, result, anomaly.zScore);
 
   // ── Down alert + incident tracking ────────────────────────────────────────
-  const wasUp   = state.lastStatus === "up";
   const wasDown = state.lastStatus === "down";
   const isDown  = result.status === "down";
   const isUp    = result.status === "up";
 
   if (isDown) {
-    // Record when this outage started (only on the first DOWN after an UP)
     if (!wasDown) {
       state.downSince = new Date(result.timestamp).getTime();
-      console.log(`[Incident] Outage started: ${url} at ${result.timestamp}`);
+      console.log(`[Incident] Outage started: monitor ${monitorId} (${monitor.url})`);
     }
-    // Fire a DOWN Slack alert respecting the 5-min cooldown
-    if (shouldSendDownAlert(url)) {
-      recordDownAlert(url);
-      sendSlackAlert(url, result, null);
-      console.log(`[Alert] DOWN alert sent for ${url}`);
+    const last = lastDownAlertTime.get(monitorId) || 0;
+    if (Date.now() - last > DOWN_ALERT_COOLDOWN_MS) {
+      lastDownAlertTime.set(monitorId, Date.now());
+      sendSlackAlert(monitor.url, result, null);
     }
   }
 
   if (isUp && wasDown && state.downSince !== null) {
-    // DOWN → UP transition: persist a resolved incident record
-    const resolvedAt  = new Date(result.timestamp).getTime();
-    const durationMs  = resolvedAt - state.downSince;
-    const incident    = { url, startedAt: state.downSince, resolvedAt, durationMs };
+    const resolvedAt = new Date(result.timestamp).getTime();
+    const incident   = {
+      monitorId,
+      url:        monitor.url,
+      startedAt:  state.downSince,
+      resolvedAt,
+      durationMs: resolvedAt - state.downSince,
+    };
     storeIncident(incident).catch((err) =>
       console.error(`[Incident] Failed to store: ${err.message}`)
     );
-    console.log(`[Incident] Resolved: ${url} — duration ${(durationMs / 1000).toFixed(0)}s`);
+    console.log(`[Incident] Resolved: monitor ${monitorId} — ${(incident.durationMs / 1000).toFixed(0)}s`);
     state.downSince = null;
   }
 
-  // Track status for next iteration
   state.lastStatus = result.status;
 
   if (_onResultCb) _onResultCb(result, anomaly);
 
   const isProblematic = anomaly.isAnomaly || result.status === "down";
   const nextInterval  = isProblematic
-    ? INTERVAL_MIN_MS
-    : Math.min(state.currentIntervalMs * INTERVAL_GROWTH, INTERVAL_MAX_MS);
+    ? state.baseIntervalMs
+    : Math.min(state.currentIntervalMs * INTERVAL_GROWTH, maxInterval(state.baseIntervalMs));
 
   if (nextInterval !== state.currentIntervalMs) {
-    console.log(`[Poller] ${url}: ${(state.currentIntervalMs/1000).toFixed(0)}s → ${(nextInterval/1000).toFixed(0)}s`);
+    console.log(`[Poller] monitor ${monitorId}: ${(state.currentIntervalMs / 1000).toFixed(0)}s → ${(nextInterval / 1000).toFixed(0)}s`);
   }
-
   state.currentIntervalMs = nextInterval;
 
   console.log(
-    `[Poll] ${url} | ${result.status.toUpperCase()} | ${result.responseTime}ms` +
-    ` | z=${anomaly.zScore ?? "N/A"} | next=${( nextInterval/1000).toFixed(1)}s`
+    `[Poll] monitor ${monitorId} (${monitor.url}) | ${result.status.toUpperCase()} | ` +
+    `${result.responseTime}ms | z=${anomaly.zScore ?? "N/A"} | next=${(nextInterval / 1000).toFixed(1)}s`
   );
 
-  // Guard again — URL might have been removed during the await above
-  if (urlState.has(url)) {
-    state.timeoutHandle = setTimeout(() => checkUrl(url), nextInterval);
+  if (monitorState.has(monitorId)) {
+    state.timeoutHandle = setTimeout(() => checkMonitor(monitorId), nextInterval);
   }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+
 function startPolling() {
   pollingStartTime = Date.now();
-  const urls = getUrls();
-  console.log(`[Poller] Starting adaptive polling for ${urls.length} URLs`);
+  const monitors = getActiveMonitors();
+  console.log(`[Poller] Starting adaptive polling for ${monitors.length} monitors`);
 
-  urls.forEach((url, i) => {
-    urlState.set(url, makeState());
-    setTimeout(() => checkUrl(url), i * 400);
+  monitors.forEach((m, i) => {
+    monitorState.set(m.id, makeState(m));
+    setTimeout(() => checkMonitor(m.id), i * 400);
   });
 
-  // React to runtime add/remove
-  registry.on("added", (url) => {
-    if (urlState.has(url)) return; // already running
-    console.log(`[Poller] Started monitoring: ${url}`);
-    urlState.set(url, makeState());
-    setTimeout(() => checkUrl(url), 0);
+  // "added" carries (monitor, prevMonitor?)
+  registry.on("added", (monitor, prevMonitor) => {
+    if (monitorState.has(monitor.id)) {
+      // Already running — this is an edit. Decide whether to reset adaptive state.
+      const existing = monitorState.get(monitor.id);
+      const intervalChanged = prevMonitor &&
+        prevMonitor.interval_seconds !== monitor.interval_seconds;
+
+      if (intervalChanged) {
+        // New base interval — reset adaptive state, preserve downSince
+        const newState = makeState(monitor, existing.downSince);
+        clearTimeout(existing.timeoutHandle);
+        monitorState.set(monitor.id, newState);
+        setTimeout(() => checkMonitor(monitor.id), 0);
+      } else {
+        // Only metadata changed — update expectedStatus in-place, keep adaptive state
+        existing.expectedStatus = monitor.expected_status ?? 200;
+      }
+      return;
+    }
+
+    console.log(`[Poller] Started monitoring: monitor ${monitor.id} (${monitor.url})`);
+    monitorState.set(monitor.id, makeState(monitor));
+    setTimeout(() => checkMonitor(monitor.id), 0);
   });
 
-  registry.on("removed", (url) => {
-    const state = urlState.get(url);
+  registry.on("removed", (monitor) => {
+    const state = monitorState.get(monitor.id);
     if (state?.timeoutHandle) clearTimeout(state.timeoutHandle);
-    urlState.delete(url);
-    console.log(`[Poller] Stopped monitoring: ${url}`);
+    // Preserve downSince in case monitor is re-added (resume after pause)
+    // by keeping the entry briefly — but we must delete it to stop polling.
+    monitorState.delete(monitor.id);
+    console.log(`[Poller] Stopped monitoring: monitor ${monitor.id} (${monitor.url})`);
   });
 
   setInterval(logComparisonStats, 5 * 60 * 1000);
 }
 
 function stopPolling() {
-  for (const [, s] of urlState) {
+  for (const [, s] of monitorState) {
     if (s.timeoutHandle) clearTimeout(s.timeoutHandle);
   }
-  urlState.clear();
+  monitorState.clear();
 }
 
 function logComparisonStats() {
   if (!pollingStartTime) return;
   const elapsedSec = (Date.now() - pollingStartTime) / 1000;
-  const fixedTotal = Math.floor((elapsedSec / (INTERVAL_START / 1000)) * urlState.size);
+  const fixedTotal = Math.floor((elapsedSec / 10) * monitorState.size);
   const saved      = fixedTotal - totalAdaptiveChecks;
   const pct        = fixedTotal > 0 ? ((saved / fixedTotal) * 100).toFixed(1) : "0.0";
   console.log("─".repeat(60));
-  console.log(`[Adaptive Polling] ${(elapsedSec/60).toFixed(1)}min | adaptive=${totalAdaptiveChecks} | fixed=${fixedTotal} | saved=${pct}%`);
-  for (const [url, s] of urlState) {
-    console.log(`  ${url.replace(/^https?:\/\/(www\.)?/,"")}: ${s.checkCount} checks, interval=${(s.currentIntervalMs/1000).toFixed(0)}s`);
+  console.log(`[Adaptive Polling] ${(elapsedSec / 60).toFixed(1)}min | adaptive=${totalAdaptiveChecks} | fixed=${fixedTotal} | saved=${pct}%`);
+  for (const [id, s] of monitorState) {
+    console.log(`  monitor ${id}: ${s.checkCount} checks, interval=${(s.currentIntervalMs / 1000).toFixed(0)}s`);
   }
   console.log("─".repeat(60));
 }
 
 function getPollingState() {
   const elapsedMs  = pollingStartTime ? Date.now() - pollingStartTime : 0;
-  const fixedTotal = Math.floor((elapsedMs / INTERVAL_START) * urlState.size);
+  const fixedTotal = Math.floor((elapsedMs / 10_000) * monitorState.size);
   const saved      = fixedTotal - totalAdaptiveChecks;
   return {
-    monitoredUrls:      getUrls(),
+    monitorCount:       monitorState.size,
     totalAdaptiveChecks,
     fixedTotalChecks:   fixedTotal,
-    savedPct: fixedTotal > 0 ? parseFloat(((saved/fixedTotal)*100).toFixed(1)) : 0,
-    urlIntervals: Object.fromEntries([...urlState.entries()].map(([u, s]) => [u, s.currentIntervalMs])),
+    savedPct: fixedTotal > 0 ? parseFloat(((saved / fixedTotal) * 100).toFixed(1)) : 0,
+    monitorIntervals: Object.fromEntries(
+      [...monitorState.entries()].map(([id, s]) => [id, s.currentIntervalMs])
+    ),
   };
 }
 
-// Kept for backward compat — used by socketHandler
-const MONITORED_URLS = { get current() { return getUrls(); } };
-
 /**
- * Returns any currently ongoing outages (DOWN with no recovery yet).
- * Used by the incidents API to merge in-progress outages with resolved ones.
- * @returns {Array<{url, startedAt, ongoing: true}>}
+ * Returns ongoing outages for public monitors only.
+ * @returns {Array<{monitorId, url, startedAt, ongoing: true}>}
  */
 function getOngoingOutages() {
-  const ongoing = [];
-  for (const [url, state] of urlState.entries()) {
-    if (state.lastStatus === "down" && state.downSince !== null) {
-      ongoing.push({ url, startedAt: state.downSince, ongoing: true });
+  const publicIds = new Set(getPublicMonitors().map((m) => m.id));
+  const ongoing   = [];
+  for (const [monitorId, state] of monitorState.entries()) {
+    if (state.lastStatus === "down" && state.downSince !== null && publicIds.has(monitorId)) {
+      const monitor = getActiveMonitors().find((m) => m.id === monitorId);
+      ongoing.push({ monitorId, url: monitor?.url ?? "", startedAt: state.downSince, ongoing: true });
     }
   }
   return ongoing;
 }
 
-module.exports = { startPolling, stopPolling, onResult, getPollingState, getOngoingOutages, MONITORED_URLS: null, getUrls };
+/**
+ * Returns monitor objects visible to this user for ownership-scoped endpoints.
+ * Includes paused monitors (they have history and should show as paused).
+ */
+function getMonitorsForUser(userId, isAdmin) {
+  const { getMonitorsForUser: reg } = require("./endpointRegistry");
+  return reg(userId, isAdmin);
+}
+
+module.exports = {
+  startPolling,
+  stopPolling,
+  onResult,
+  getPollingState,
+  getOngoingOutages,
+  getMonitorsForUser,
+  // Expose for tests
+  _monitorState: monitorState,
+};

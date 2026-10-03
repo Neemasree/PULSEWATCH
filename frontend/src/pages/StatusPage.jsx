@@ -134,7 +134,7 @@ export default function StatusPage() {
 
             <div style={s.serviceList}>
               {data.services.map((svc) => (
-                <ServiceRow key={svc.url} svc={svc} />
+                <ServiceRow key={svc.monitorId ?? svc.url} svc={svc} />
               ))}
             </div>
           </section>
@@ -149,7 +149,7 @@ export default function StatusPage() {
             </div>
             <div style={s.summaryGrid}>
               {data.services.map((svc) => (
-                <UptimeCard key={svc.url} svc={svc} />
+                <UptimeCard key={svc.monitorId ?? svc.url} svc={svc} />
               ))}
             </div>
           </section>
@@ -164,7 +164,7 @@ export default function StatusPage() {
             </div>
             <div style={s.metricsGrid}>
               {data.services.map((svc) => (
-                <LatencyCard key={svc.url} svc={svc} />
+                <LatencyCard key={svc.monitorId ?? svc.url} svc={svc} />
               ))}
             </div>
           </section>

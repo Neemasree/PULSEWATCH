@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: pulsewatch-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ALLOWED_ORIGIN
+        sync: false          # set in Render dashboard — your Vercel frontend URL
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pulsewatch-db
+          property: connectionString
+      - key: REDIS_URL
+        sync: false          # set in Render dashboard — your Upstash Redis URL
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: SLACK_WEBHOOK_URL
+        sync: false          # optional
+
+databases:
+  - name: pulsewatch-db
+    databaseName: pulsewatch
+    plan: free

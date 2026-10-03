@@ -89,9 +89,14 @@ export const api = {
   publicIncidents: () => request("GET", "/api/public/incidents", null, { skipRefresh: true }),
 
   // Data routes — 401 triggers silent refresh + retry
-  pollingStats:   ()    => request("GET",    "/api/polling-stats"),
-  endpoints:      ()    => request("GET",    "/api/endpoints"),
-  addEndpoint:    (url) => request("POST",   "/api/endpoints", { url }),
-  removeEndpoint: (url) => request("DELETE", "/api/endpoints", { url }),
-  check:          (url) => request("GET",    `/api/check?url=${encodeURIComponent(url)}`),
+  pollingStats:    ()       => request("GET",    "/api/polling-stats"),
+  monitors:        ()       => request("GET",    "/api/monitors"),
+  createMonitor:   (body)   => request("POST",   "/api/monitors", body),
+  updateMonitor:   (id, b)  => request("PATCH",  `/api/monitors/${id}`, b),
+  deleteMonitor:   (id)     => request("DELETE", `/api/monitors/${id}`),
+  pauseMonitor:    (id)     => request("POST",   `/api/monitors/${id}/pause`),
+  resumeMonitor:   (id)     => request("POST",   `/api/monitors/${id}/resume`),
+  history:         (monitorId, n) => request("GET", `/api/history?monitorId=${monitorId}${n ? `&n=${n}` : ""}`),
+  status:          ()       => request("GET",    "/api/status"),
+  check:           (url)    => request("GET",    `/api/check?url=${encodeURIComponent(url)}`),
 };

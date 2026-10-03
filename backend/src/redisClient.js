@@ -1,32 +1,24 @@
 /**
- * redisClient.js  (Phase 2.1)
- * ioredis connection factory — reads host/port from environment variables
- * so the same code works locally, in Docker, and on cloud platforms like Upstash.
+ * redisClient.js
+ * ioredis connection + time-series storage, keyed by monitor ID.
  *
- * Exports:
- *   client          — the raw ioredis instance (for one-off commands)
- *   storeMetric     — save a ping result into a sorted set
- *   getRecentMetrics — fetch the last N results for a URL
+ * Key scheme (Phase 1.5):
+ *   metrics:<monitorId>   — sorted set of ping results
+ *   incidents:<monitorId> — sorted set of resolved incidents
  *
- * Storage design: one Redis sorted set per URL.
- *   Key:   metrics:<sanitised-url>
- *   Score: Unix timestamp in ms  ← keeps entries ordered by time automatically
- *   Value: JSON-serialised result object
- *
- * Why sorted sets and not plain strings?
- *   ZADD + ZREVRANGE gives us "last N results ordered by time" in a single
- *   O(log N) call. With plain SET we'd have to maintain a separate index.
+ * Keying by monitor ID (not URL) means two monitors pointing at the same
+ * URL have completely independent histories, and deleting one never
+ * corrupts the other's data.
  */
 
 const Redis = require("ioredis");
 
-const TTL_SECONDS = 7 * 24 * 3600; // 7 days — keeps enough history for the status page uptime bars
+const TTL_SECONDS          = 7 * 24 * 3600;  // 7 days
+const INCIDENT_TTL_SECONDS = 30 * 24 * 3600; // 30 days
+const MAX_INCIDENTS        = 50;
 
-// Support both individual host/port vars (local/Docker) and a single
-// connection string (Upstash: redis://:<password>@host:port)
 function createClient() {
   const redisUrl = process.env.REDIS_URL;
-
   const client = redisUrl
     ? new Redis(redisUrl, { tls: redisUrl.startsWith("rediss://") ? {} : undefined })
     : new Redis({
@@ -34,148 +26,114 @@ function createClient() {
         port: parseInt(process.env.REDIS_PORT || "6379", 10),
         retryStrategy: (times) => Math.min(times * 100, 3000),
       });
-
   client.on("connect", () => console.log("[Redis] Connected"));
-  client.on("error", (err) => console.error("[Redis] Error:", err.message));
-
+  client.on("error",   (err) => console.error("[Redis] Error:", err.message));
   return client;
 }
 
 const client = createClient();
 
-/**
- * Sanitises a URL into a safe Redis key segment.
- * "https://example.com/path?q=1" → "metrics:example.com/path"
- */
-function urlToKey(url) {
-  return `metrics:${url.replace(/^https?:\/\/(www\.)?/, "").replace(/[?#].*$/, "")}`;
+/** metrics:<monitorId> */
+function monitorMetricKey(monitorId) {
+  return `metrics:${monitorId}`;
+}
+
+/** incidents:<monitorId> */
+function monitorIncidentKey(monitorId) {
+  return `incidents:${monitorId}`;
 }
 
 /**
- * Stores one ping result in the sorted set for that URL.
- * Also slides the TTL forward so active keys never expire mid-run.
- *
- * @param {string} url     The monitored URL
- * @param {object} result  The ping result object from pinger.js
+ * Stores one ping result for a monitor.
+ * @param {number|string} monitorId
+ * @param {object} result  ping result from pinger.js (must include timestamp)
  */
-async function storeMetric(url, result) {
-  const key = urlToKey(url);
-  const score = new Date(result.timestamp).getTime(); // ms timestamp as sort score
-
-  // Pipeline = one network round-trip for all three commands
+async function storeMetric(monitorId, result) {
+  const key   = monitorMetricKey(monitorId);
+  const score = new Date(result.timestamp).getTime();
   const pipeline = client.pipeline();
   pipeline.zadd(key, score, JSON.stringify(result));
-  pipeline.zremrangebyrank(key, 0, -501); // keep newest 500 entries
+  pipeline.zremrangebyrank(key, 0, -501); // keep newest 500
   pipeline.expire(key, TTL_SECONDS);
   await pipeline.exec();
 }
 
 /**
- * Returns the most recent `count` results for a URL, newest first.
- *
- * @param {string} url
- * @param {number} count  Default 20
- * @returns {Promise<object[]>}
+ * Returns the most recent `count` results for a monitor, newest first.
+ * @param {number|string} monitorId
+ * @param {number} count
  */
-async function getRecentMetrics(url, count = 20) {
-  const key = urlToKey(url);
+async function getRecentMetrics(monitorId, count = 20) {
+  const key = monitorMetricKey(monitorId);
   const raw = await client.zrevrange(key, 0, count - 1);
   return raw.map((item) => JSON.parse(item));
 }
 
 /**
- * Buckets all stored results for a URL into hourly slots.
- * Returns an array of `numHours` entries, index 0 = oldest, index N-1 = most recent.
- * Each entry is "up" | "down" | "unknown" based on the majority status in that hour.
- *
- * Used by the public status page to render real uptime history bars.
- *
- * @param {string} url
- * @param {number} numHours  How many hourly buckets to return (default 90 × 24 = 2160 is too many; we use 90 to match the 90-bar display)
- * @returns {Promise<Array<"up"|"down"|"unknown">>}
+ * Buckets stored results into hourly slots for the uptime bar display.
+ * Returns array of `numHours` entries ("up"|"down"|"unknown"), oldest→newest.
+ * @param {number|string} monitorId
+ * @param {number} numHours
  */
-async function getHourlyBuckets(url, numHours = 90) {
-  const key = urlToKey(url);
-  // Fetch all stored entries within the window
-  const windowMs = numHours * 60 * 60 * 1000;
-  const since    = Date.now() - windowMs;
+async function getHourlyBuckets(monitorId, numHours = 90) {
+  const key       = monitorMetricKey(monitorId);
+  const windowMs  = numHours * 60 * 60 * 1000;
+  const since     = Date.now() - windowMs;
+  const raw       = await client.zrangebyscore(key, since, "+inf");
+  const results   = raw.map((item) => JSON.parse(item));
 
-  // ZRANGEBYSCORE returns entries ordered oldest→newest within the time range
-  const raw = await client.zrangebyscore(key, since, "+inf");
-  const results = raw.map((item) => JSON.parse(item));
-
-  // Build a map: hourSlot (floor to hour) → { up, down }
   const buckets = new Map();
   for (const r of results) {
-    const ts   = new Date(r.timestamp).getTime();
-    const slot = Math.floor(ts / (60 * 60 * 1000)); // hour number
+    const slot = Math.floor(new Date(r.timestamp).getTime() / (60 * 60 * 1000));
     if (!buckets.has(slot)) buckets.set(slot, { up: 0, down: 0 });
     const b = buckets.get(slot);
-    if (r.status === "up") b.up++;
-    else b.down++;
+    if (r.status === "up") b.up++; else b.down++;
   }
 
-  // Build the output array — one entry per hour slot from oldest to newest
   const nowSlot   = Math.floor(Date.now() / (60 * 60 * 1000));
   const startSlot = nowSlot - numHours + 1;
-  const output = [];
-
+  const output    = [];
   for (let slot = startSlot; slot <= nowSlot; slot++) {
     const b = buckets.get(slot);
-    if (!b)           output.push("unknown"); // no data for this hour
+    if (!b)              output.push("unknown");
     else if (b.up > b.down) output.push("up");
-    else              output.push("down");
+    else                 output.push("down");
   }
-
   return output;
 }
 
-module.exports = { client, storeMetric, getRecentMetrics, getHourlyBuckets, urlToKey };
-
-// ── Incident storage ──────────────────────────────────────────────────────────
-// Key scheme: incidents:<sanitised-url>
-// Sorted set, score = resolvedAt timestamp ms (ongoing incidents not stored here
-// until they resolve — they live in-memory in poller.js and are merged at query time).
-
-const INCIDENT_TTL_SECONDS = 30 * 24 * 3600; // 30 days
-const MAX_INCIDENTS        = 50;              // per URL
-
 /**
- * Converts a URL into a Redis key for incident storage.
- * "https://example.com/path" → "incidents:example.com/path"
- */
-function urlToIncidentKey(url) {
-  return `incidents:${url.replace(/^https?:\/\/(www\.)?/, "").replace(/[?#].*$/, "")}`;
-}
-
-/**
- * Persists a resolved incident record to Redis.
- *
- * @param {{ url, startedAt, resolvedAt, durationMs }} incident
+ * Persists a resolved incident.
+ * @param {{ monitorId, url, startedAt, resolvedAt, durationMs }} incident
  */
 async function storeIncident(incident) {
-  const key   = urlToIncidentKey(incident.url);
-  const score = incident.resolvedAt; // ms timestamp — sorts chronologically
-
+  const key      = monitorIncidentKey(incident.monitorId);
+  const score    = incident.resolvedAt;
   const pipeline = client.pipeline();
   pipeline.zadd(key, score, JSON.stringify(incident));
-  pipeline.zremrangebyrank(key, 0, -(MAX_INCIDENTS + 1)); // keep newest 50
+  pipeline.zremrangebyrank(key, 0, -(MAX_INCIDENTS + 1));
   pipeline.expire(key, INCIDENT_TTL_SECONDS);
   await pipeline.exec();
 }
 
 /**
- * Returns the most recent `count` resolved incidents for a URL, newest first.
- *
- * @param {string} url
+ * Returns the most recent `count` resolved incidents for a monitor, newest first.
+ * @param {number|string} monitorId
  * @param {number} count
- * @returns {Promise<object[]>}
  */
-async function getIncidents(url, count = 20) {
-  const key = urlToIncidentKey(url);
+async function getIncidents(monitorId, count = 20) {
+  const key = monitorIncidentKey(monitorId);
   const raw = await client.zrevrange(key, 0, count - 1);
   return raw.map((item) => JSON.parse(item));
 }
 
-// Re-export with incident helpers appended
-Object.assign(module.exports, { storeIncident, getIncidents, urlToIncidentKey });
+module.exports = {
+  client,
+  storeMetric,
+  getRecentMetrics,
+  getHourlyBuckets,
+  storeIncident,
+  getIncidents,
+  monitorMetricKey,
+  monitorIncidentKey,
+};

@@ -45,8 +45,9 @@
 
 const jwt    = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const crypto = require("crypto"); // built-in Node module — no install needed
-const pool   = require("./db/pool");
+const crypto      = require("crypto"); // built-in Node module — no install needed
+const pool        = require("./db/pool");
+const { client: redisClient } = require("./redisClient");
 
 // Separate secrets per token type
 const ACCESS_SECRET  = process.env.JWT_ACCESS_SECRET  || "pw-access-dev-secret-change-in-prod";
@@ -110,54 +111,54 @@ async function createUser(username, passwordHash, role, name) {
   return rows[0];
 }
 
-// ── Refresh token blacklist ───────────────────────────────────────────────────
-// Stores JTI (unique token ID) → expiry timestamp.
-// On every refresh, the old JTI is added here; tokens in this set are rejected
-// even if their signature is valid.
-// In production: use a Redis SET with TTL so the set doesn't grow unbounded
-// across multiple server instances.
-const refreshBlacklist = new Map(); // jti → expiry ms
+// ── Refresh token blacklist (Redis-backed) ──────────────────────────────────
+// Key: auth:blacklist:<jti> with TTL = token's remaining lifetime.
+// Preserves blacklist state across server restarts and multiple backend replicas.
 
-function isBlacklisted(jti) {
-  const exp = refreshBlacklist.get(jti);
-  if (!exp) return false;
-  if (Date.now() > exp) { refreshBlacklist.delete(jti); return false; }
-  return true;
+async function blacklist(jti, expMs) {
+  const ttlSeconds = Math.max(1, Math.ceil((expMs - Date.now()) / 1000));
+  await redisClient.set(`auth:blacklist:${jti}`, "1", "EX", ttlSeconds);
 }
 
-function blacklist(jti, expMs) {
-  refreshBlacklist.set(jti, expMs);
+async function isBlacklisted(jti) {
+  const exists = await redisClient.exists(`auth:blacklist:${jti}`);
+  return exists === 1;
 }
 
-// ── Account lockout store ─────────────────────────────────────────────────────
-// username → { failCount, lockedUntil }
-const lockouts = new Map();
+// ── Account lockout store (Redis-backed) ─────────────────────────────────────
+// Keys:
+//   auth:fails:<username>   - counter of consecutive failures (15 min TTL)
+//   auth:lockout:<username> - present only while locked out (15 min TTL)
 
-const MAX_FAILS  = 5;
-const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_FAILS       = 5;
+const LOCKOUT_SECONDS = 15 * 60; // 15 minutes
 
-function checkLockout(username) {
-  const entry = lockouts.get(username);
-  if (!entry) return null;
-  if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
-    const remainSec = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-    return `Account locked. Try again in ${remainSec}s.`;
+async function checkLockout(username) {
+  const lockKey = `auth:lockout:${username.toLowerCase()}`;
+  const ttl = await redisClient.ttl(lockKey);
+  if (ttl > 0) {
+    return `Account locked. Try again in ${ttl}s.`;
   }
   return null;
 }
 
-function recordFailure(username) {
-  const entry = lockouts.get(username) || { failCount: 0, lockedUntil: null };
-  entry.failCount++;
-  if (entry.failCount >= MAX_FAILS) {
-    entry.lockedUntil = Date.now() + LOCKOUT_MS;
-    entry.failCount   = 0;
+async function recordFailure(username) {
+  const failsKey = `auth:fails:${username.toLowerCase()}`;
+  const count = await redisClient.incr(failsKey);
+  if (count === 1) {
+    await redisClient.expire(failsKey, LOCKOUT_SECONDS);
   }
-  lockouts.set(username, entry);
+  if (count >= MAX_FAILS) {
+    await redisClient.set(`auth:lockout:${username.toLowerCase()}`, "1", "EX", LOCKOUT_SECONDS);
+    await redisClient.del(failsKey);
+  }
 }
 
-function clearFailures(username) {
-  lockouts.delete(username);
+async function clearFailures(username) {
+  await redisClient.del(
+    `auth:fails:${username.toLowerCase()}`,
+    `auth:lockout:${username.toLowerCase()}`
+  );
 }
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
@@ -195,8 +196,8 @@ function signRefreshToken(user) {
  * @returns {Promise<{ accessToken, refreshToken, refreshJti, user }>}
  */
 async function login(username, password) {
-  // Lockout check — synchronous, no DB hit needed
-  const lockMsg = checkLockout(username);
+  // Lockout check — now querying Redis TTL
+  const lockMsg = await checkLockout(username);
   if (lockMsg) throw new Error(lockMsg);
 
   const user = await findByUsername(username);
@@ -206,11 +207,11 @@ async function login(username, password) {
   const valid = await bcrypt.compare(password, hash);
 
   if (!user || !valid) {
-    if (user) recordFailure(username);
+    if (user) await recordFailure(username);
     throw new Error("Invalid credentials");
   }
 
-  clearFailures(username);
+  await clearFailures(username);
 
   const accessToken                              = signAccessToken(user);
   const { token: refreshToken, jti: refreshJti } = signRefreshToken(user);
@@ -289,11 +290,11 @@ async function rotateRefreshToken(oldRefreshToken) {
     throw new Error("Invalid or expired refresh token");
   }
 
-  if (isBlacklisted(payload.jti)) {
+  if (await isBlacklisted(payload.jti)) {
     throw new Error("Refresh token already used");
   }
 
-  blacklist(payload.jti, payload.exp * 1000);
+  await blacklist(payload.jti, payload.exp * 1000);
 
   const user = await findById(payload.sub);
   if (!user) throw new Error("User no longer exists");
@@ -313,10 +314,10 @@ async function rotateRefreshToken(oldRefreshToken) {
  * Invalidates a refresh token JTI so logout is server-enforced.
  * @param {string} refreshToken
  */
-function revokeRefreshToken(refreshToken) {
+async function revokeRefreshToken(refreshToken) {
   try {
     const payload = jwt.verify(refreshToken, REFRESH_SECRET);
-    blacklist(payload.jti, payload.exp * 1000);
+    await blacklist(payload.jti, payload.exp * 1000);
   } catch {
     // Already expired or invalid — nothing to revoke
   }
@@ -419,4 +420,5 @@ module.exports = {
   login, register, rotateRefreshToken, revokeRefreshToken,
   verifyAccessToken, requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
+  blacklist, isBlacklisted, checkLockout, recordFailure, clearFailures,
 };

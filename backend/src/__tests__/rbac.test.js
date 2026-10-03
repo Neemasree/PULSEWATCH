@@ -90,7 +90,7 @@ describe("Server-side RBAC", () => {
       expect(res._status).toBe(200); // not changed — next() was called
     });
 
-    test("returns 403 when guest calls admin-only DELETE /api/endpoints", () => {
+    test("returns 403 when guest calls admin-only route", () => {
       const req  = makeReq("guest");
       const res  = makeRes();
       const next = jest.fn();
@@ -104,7 +104,7 @@ describe("Server-side RBAC", () => {
       expect(res._body.error).toMatch(/forbidden/i);
     });
 
-    test("returns 403 when guest calls admin-only POST /api/endpoints", () => {
+    test("returns 403 when guest calls another admin-only route", () => {
       const req  = makeReq("guest");
       const res  = makeRes();
       const next = jest.fn();

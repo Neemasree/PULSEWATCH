@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import AppShell from "../components/AppShell";
 import UrlCard from "../components/UrlCard";
 import PollingStats from "../components/PollingStats";
@@ -8,19 +8,28 @@ import { api } from "../api";
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { urlData, pollingStats, connected } = useSocket(user);
+  const { monitorData, pollingStats, connected } = useSocket(user);
   const isAdmin = user?.role === "admin";
 
-  const [newUrl,   setNewUrl]   = useState("");
-  const [addError, setAddError] = useState("");
-  const [adding,   setAdding]   = useState(false);
+  const [newUrl,    setNewUrl]    = useState("");
+  const [addError,  setAddError]  = useState("");
+  const [adding,    setAdding]    = useState(false);
+  const [monitors,  setMonitors]  = useState([]);
+
+  // Load monitor list for display names and for delete-by-id
+  useEffect(() => {
+    api.monitors().then((d) => setMonitors(d.monitors || [])).catch(() => {});
+  }, [user?.id]);
 
   async function handleAddUrl(e) {
     e.preventDefault();
     setAddError("");
     setAdding(true);
     try {
-      await api.addEndpoint(newUrl.trim());
+      const url  = newUrl.trim();
+      const name = new URL(url).hostname;
+      const { monitor } = await api.createMonitor({ name, url, is_public: true });
+      setMonitors((prev) => [...prev, monitor]);
       setNewUrl("");
     } catch (err) {
       setAddError(err.message);
@@ -29,20 +38,25 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleRemoveUrl(url) {
-    try { await api.removeEndpoint(url); }
-    catch (err) { console.error("[Dashboard] Remove failed:", err.message); }
+  async function handleRemoveMonitor(monitorId) {
+    try {
+      await api.deleteMonitor(monitorId);
+      setMonitors((prev) => prev.filter((m) => m.id !== monitorId));
+    } catch (err) { console.error("[Dashboard] Remove failed:", err.message); }
   }
 
-  const urls         = Object.keys(urlData);
-  const upCount      = urls.filter((u) => urlData[u]?.[0]?.status === "up").length;
-  const anomalyCount = urls.filter((u) => urlData[u]?.[0]?.anomaly?.isAnomaly).length;
-  const sortedUrls   = [...urls].sort((a, b) => {
-    const aL = urlData[a]?.[0];
-    const bL = urlData[b]?.[0];
+  // Build display list: merge monitors with their latest socket data
+  // monitorData is keyed by monitorId (number or string from server)
+  const monitorIds = monitors.map((m) => m.id);
+  const upCount      = monitorIds.filter((id) => monitorData[id]?.[0]?.status === "up").length;
+  const anomalyCount = monitorIds.filter((id) => monitorData[id]?.[0]?.anomaly?.isAnomaly).length;
+
+  const sortedMonitors = [...monitors].sort((a, b) => {
+    const aL = monitorData[a.id]?.[0];
+    const bL = monitorData[b.id]?.[0];
     const aS = (aL?.anomaly?.isAnomaly ? -2 : 0) + (aL?.status === "down" ? -1 : 0);
     const bS = (bL?.anomaly?.isAnomaly ? -2 : 0) + (bL?.status === "down" ? -1 : 0);
-    return aS !== bS ? aS - bS : a.localeCompare(b);
+    return aS !== bS ? aS - bS : a.name.localeCompare(b.name);
   });
 
   return (
@@ -53,9 +67,9 @@ export default function DashboardPage() {
           <p style={s.subtitle}>Live uptime monitoring · adaptive polling · z-score anomaly detection</p>
         </div>
         <div style={s.pills}>
-          {urls.length > 0 && <>
-            <Pill label={`${upCount}/${urls.length}`} sub="online"
-              color={upCount === urls.length ? "#68d391" : "#fc8181"} />
+          {monitors.length > 0 && <>
+            <Pill label={`${upCount}/${monitors.length}`} sub="online"
+              color={upCount === monitors.length ? "#68d391" : "#fc8181"} />
             {anomalyCount > 0 && <Pill label={anomalyCount} sub="anomalies" color="#fc8181" />}
             {pollingStats && <Pill label={`${pollingStats.savedPct}%`} sub="checks saved" color="#4FD1C5" />}
           </>}
@@ -72,7 +86,7 @@ export default function DashboardPage() {
       {isAdmin && (
         <section style={s.section}>
           <SectionTitle>
-            Manage Endpoints
+            Manage Monitors
             <span style={s.adminTag}>admin only</span>
           </SectionTitle>
           <form onSubmit={handleAddUrl} style={s.addForm}>
@@ -85,7 +99,7 @@ export default function DashboardPage() {
               required
             />
             <button style={{ ...s.addBtn, opacity: adding ? 0.6 : 1 }} type="submit" disabled={adding}>
-              {adding ? "Adding…" : "+ Add endpoint"}
+              {adding ? "Adding…" : "+ Add monitor"}
             </button>
           </form>
           {addError && <div style={s.addError} role="alert">{addError}</div>}
@@ -94,7 +108,7 @@ export default function DashboardPage() {
 
       <section style={s.section}>
         <SectionTitle>Monitored Endpoints</SectionTitle>
-        {sortedUrls.length === 0 ? (
+        {sortedMonitors.length === 0 ? (
           <div style={s.empty}>
             {connected
               ? "Waiting for first results… (checks run every 5–60s)"
@@ -102,13 +116,16 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div style={s.grid}>
-            {sortedUrls.map((url) => (
+            {sortedMonitors.map((monitor) => (
               <UrlCard
-                key={url}
-                url={url}
-                results={urlData[url]}
+                key={monitor.id}
+                url={monitor.url}
+                name={monitor.name}
+                monitorId={monitor.id}
+                enabled={monitor.enabled}
+                results={monitorData[monitor.id] || []}
                 canRemove={isAdmin}
-                onRemove={handleRemoveUrl}
+                onRemove={() => handleRemoveMonitor(monitor.id)}
               />
             ))}
           </div>

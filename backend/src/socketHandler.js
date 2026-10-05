@@ -95,4 +95,21 @@ function broadcastPollingStats(stats) {
   if (_io) _io.emit("polling-stats", stats);
 }
 
-module.exports = { initSocketHandler, broadcastMetric, broadcastPollingStats, userRoom };
+/**
+ * Broadcasts an incident lifecycle event to the owning user's room + admin room.
+ * event shape: { type: 'opened'|'acknowledged'|'resolved', monitorId, incidentId, ... }
+ */
+function broadcastIncidentUpdate(event) {
+  if (!_io) return;
+  const { monitorId } = event;
+  const ownerIds = new Set();
+  for (const m of getActiveMonitors()) {
+    if (m.id === monitorId) ownerIds.add(String(m.user_id));
+  }
+  for (const uid of ownerIds) {
+    _io.to(userRoom(uid)).emit("incident-update", event);
+  }
+  _io.to("admin").emit("incident-update", event);
+}
+
+module.exports = { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate, userRoom };

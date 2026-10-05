@@ -36,12 +36,13 @@ const {
 } = require("./auth");
 
 const { pingUrl }               = require("./pinger");
-const { storeMetric, getRecentMetrics, getHourlyBuckets, getIncidents } = require("./redisClient");
+const { storeMetric, getRecentMetrics, getHourlyBuckets } = require("./redisClient");
 const { startPolling, onResult, getPollingState, getOngoingOutages, getMonitorsForUser } = require("./poller");
 const { loadFromDb, getPublicMonitors } = require("./endpointRegistry");
 const { runMigrations }         = require("../scripts/migrate");
 const monitorsRouter            = require("./monitorsRouter");
-const { initSocketHandler, broadcastMetric, broadcastPollingStats } = require("./socketHandler");
+const { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate } = require("./socketHandler");
+const { getPublicIncidents, getIncidentsByMonitor, acknowledgeIncident } = require("./db/incidents");
 
 const PORT = process.env.PORT || 3000;
 const rawOrigin = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
@@ -238,21 +239,31 @@ app.get("/api/public/status", async (_req, res) => {
 
 /**
  * GET /api/public/incidents
- * Returns the last 10 resolved incidents per URL, plus any currently ongoing
- * outages from in-memory poller state. No auth required (public status page).
+ * Returns up to 10 resolved incidents per public monitor (via ROW_NUMBER
+ * PARTITION BY monitor_id — not a global LIMIT 10), plus any currently
+ * ongoing outages from in-memory poller state. No auth required.
+ *
+ * Restart-persistence note (Phase 4):
+ *   OPEN/ACKNOWLEDGED incidents survive server restarts (stored in Postgres).
+ *   The ongoing-outage banner is driven by in-memory poller state and may be
+ *   absent immediately after restart until the next DOWN check fires.
+ *   Startup reconciliation is deferred to a future phase.
  *
  * Response shape:
- *   { incidents: [ { url, startedAt, resolvedAt, durationMs } | { url, startedAt, ongoing: true } ] }
- *   Sorted newest-first by startedAt.
+ *   { incidents: [ ...resolved, ...ongoing ] }  sorted newest-first by startedAt.
  */
 app.get("/api/public/incidents", async (_req, res) => {
   try {
-    const publicMonitors = getPublicMonitors();
-    const resolved = (
-      await Promise.all(publicMonitors.map((m) => getIncidents(m.id, 10)))
-    ).flat();
-    const ongoing = getOngoingOutages();
-    const all = [...ongoing, ...resolved].sort((a, b) => b.startedAt - a.startedAt);
+    const resolved = await getPublicIncidents();
+    const ongoing  = getOngoingOutages();
+    // Normalise resolved rows to camelCase for the client
+    const resolvedNorm = resolved.map((r) => ({
+      monitorId:  r.monitor_id,
+      startedAt:  new Date(r.started_at).getTime(),
+      resolvedAt: new Date(r.resolved_at).getTime(),
+      durationMs: r.duration_ms,
+    }));
+    const all = [...ongoing, ...resolvedNorm].sort((a, b) => b.startedAt - a.startedAt);
     res.json({ incidents: all });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -263,6 +274,62 @@ app.get("/api/public/incidents", async (_req, res) => {
 
 // Monitors CRUD API
 app.use("/api/monitors", monitorsRouter);
+
+/**
+ * GET /api/incidents?monitorId=<id>&limit=<n>
+ * Returns incidents for a single monitor (ownership-scoped).
+ */
+app.get("/api/incidents", requireAuth, async (req, res) => {
+  const monitorId = parseInt(req.query.monitorId, 10);
+  const limit     = Math.min(parseInt(req.query.limit || "50", 10), 200);
+  if (isNaN(monitorId)) return res.status(400).json({ error: '"monitorId" is required' });
+
+  const isAdmin  = req.user.role === "admin";
+  const monitors = getMonitorsForUser(req.user.sub, isAdmin);
+  if (!monitors.find((m) => m.id === monitorId)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const incidents = await getIncidentsByMonitor({
+      monitorId,
+      userId: req.user.sub,
+      isAdmin,
+      limit,
+    });
+    return res.json({ monitorId, incidents });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/incidents/:id/acknowledge
+ * Acknowledges an OPEN incident (ownership-scoped).
+ */
+app.post("/api/incidents/:id/acknowledge", requireAuth, csrfProtect, async (req, res) => {
+  const incidentId = parseInt(req.params.id, 10);
+  if (isNaN(incidentId)) return res.status(400).json({ error: "Invalid incident ID" });
+
+  try {
+    const isAdmin  = req.user.role === "admin";
+    const incident = await acknowledgeIncident({
+      incidentId,
+      userId: req.user.sub,
+      isAdmin,
+    });
+    if (!incident) return res.status(404).json({ error: "Incident not found or already resolved" });
+    broadcastIncidentUpdate({
+      type:           "acknowledged",
+      monitorId:      incident.monitor_id,
+      incidentId:     incident.id,
+      acknowledgedAt: new Date(incident.acknowledged_at).getTime(),
+    });
+    return res.json({ incident });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 app.get("/api/check", requireAuth, async (req, res) => {
   const { url } = req.query;

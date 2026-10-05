@@ -20,17 +20,25 @@
  */
 
 const { pingUrl }        = require("./pinger");
-const { storeMetric, storeIncident } = require("./redisClient");
+const { storeMetric }    = require("./redisClient");
+const { openIncident, resolveIncident } = require("./db/incidents");
 const { detectAnomaly }  = require("./anomalyDetector");
 const { sendSlackAlert } = require("./alerts");
 const { getActiveMonitors, getPublicMonitors, registry } = require("./endpointRegistry");
+// Imported lazily via getter to avoid circular dependency at module load time
+function getBroadcastIncidentUpdate() {
+  return require("./socketHandler").broadcastIncidentUpdate;
+}
 
 const INTERVAL_GROWTH = 1.5;
 const READINGS_WINDOW = 50;
 const DOWN_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
 // monitorId → { baseIntervalMs, currentIntervalMs, readings, checkCount,
-//               timeoutHandle, lastStatus, downSince, expectedStatus }
+//               timeoutHandle, lastStatus, downSince, expectedStatus,
+//               openIncidentId }
+// openIncidentId: fast in-memory guard — the PG unique index is the final
+// source of truth and handles the restart case via openIncident()'s 23505 recovery.
 const monitorState = new Map();
 
 const lastDownAlertTime = new Map(); // monitorId → ms
@@ -60,6 +68,7 @@ function makeState(monitor, preserveDownSince = null) {
     timeoutHandle:     null,
     lastStatus:        null,
     downSince:         preserveDownSince,
+    openIncidentId:    null,
   };
 }
 
@@ -112,6 +121,24 @@ async function checkMonitor(monitorId) {
     if (!wasDown) {
       state.downSince = new Date(result.timestamp).getTime();
       console.log(`[Incident] Outage started: monitor ${monitorId} (${monitor.url})`);
+      // Only open a new PG incident if we don't already have one in memory.
+      // openIncident() also handles the restart case: if a duplicate OPEN row
+      // already exists (unique index violation), it recovers the existing row.
+      if (!state.openIncidentId) {
+        openIncident({ monitorId, startedAt: state.downSince })
+          .then((row) => {
+            if (row) {
+              state.openIncidentId = row.id;
+              getBroadcastIncidentUpdate()({
+                type:       "opened",
+                monitorId,
+                incidentId: row.id,
+                startedAt:  state.downSince,
+              });
+            }
+          })
+          .catch((err) => console.error(`[Incident] openIncident failed: ${err.message}`));
+      }
     }
     const last = lastDownAlertTime.get(monitorId) || 0;
     if (Date.now() - last > DOWN_ALERT_COOLDOWN_MS) {
@@ -121,19 +148,28 @@ async function checkMonitor(monitorId) {
   }
 
   if (isUp && wasDown && state.downSince !== null) {
-    const resolvedAt = new Date(result.timestamp).getTime();
-    const incident   = {
-      monitorId,
-      url:        monitor.url,
-      startedAt:  state.downSince,
-      resolvedAt,
-      durationMs: resolvedAt - state.downSince,
-    };
-    storeIncident(incident).catch((err) =>
-      console.error(`[Incident] Failed to store: ${err.message}`)
-    );
-    console.log(`[Incident] Resolved: monitor ${monitorId} — ${(incident.durationMs / 1000).toFixed(0)}s`);
-    state.downSince = null;
+    const resolvedAt  = new Date(result.timestamp).getTime();
+    const durationSec = ((resolvedAt - state.downSince) / 1000).toFixed(0);
+    if (state.openIncidentId) {
+      resolveIncident({ incidentId: state.openIncidentId, resolvedAt })
+        .then((row) => {
+          if (row) {
+            getBroadcastIncidentUpdate()({
+              type:       "resolved",
+              monitorId,
+              incidentId: row.id,
+              resolvedAt: new Date(row.resolved_at).getTime(),
+              durationMs: row.duration_ms,
+            });
+          }
+        })
+        .catch((err) => console.error(`[Incident] resolveIncident failed: ${err.message}`));
+      console.log(`[Incident] Resolved: monitor ${monitorId} — ${durationSec}s`);
+    } else {
+      console.warn(`[Incident] Resolved but no openIncidentId for monitor ${monitorId} — skipping DB update`);
+    }
+    state.downSince     = null;
+    state.openIncidentId = null;
   }
 
   state.lastStatus = result.status;

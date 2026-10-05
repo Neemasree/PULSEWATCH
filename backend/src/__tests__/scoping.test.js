@@ -16,7 +16,7 @@ const jwt      = require("jsonwebtoken");
 const pool     = require("../db/pool");
 const { app }  = require("../index");
 const { client: redisClient } = require("../redisClient");
-const { storeMetric, storeIncident, monitorIncidentKey } = require("../redisClient");
+const { storeMetric } = require("../redisClient");
 const { notifyMonitorAdded, notifyMonitorRemoved } = require("../endpointRegistry");
 const { getMonitorsForUser } = require("../poller");
 const { userRoom }           = require("../socketHandler");
@@ -154,25 +154,43 @@ describe("Gap 2 — GET /api/public/* only exposes is_public=true monitors", () 
   });
 
   test("GET /api/public/incidents does NOT include incidents for the private monitor", async () => {
-    await storeIncident({
-      monitorId: privateMonitor.id, url: privateMonitor.url,
-      startedAt: Date.now() - 60000, resolvedAt: Date.now(), durationMs: 60000,
-    });
-    const res = await request(app).get("/api/public/incidents").expect(200);
-    const mids = res.body.incidents.map((i) => i.monitorId);
-    expect(mids).not.toContain(privateMonitor.id);
-    await redisClient.del(monitorIncidentKey(privateMonitor.id));
+    // Seed a resolved incident directly in Postgres for the private (non-public) monitor.
+    // The endpoint uses getPublicIncidents() which JOINs on is_public=true, so this
+    // row must be excluded regardless of its presence in the DB.
+    const { rows } = await pool.query(
+      `INSERT INTO incidents (monitor_id, status, started_at, resolved_at, duration_ms)
+       VALUES ($1, 'RESOLVED', NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '1 minute', 60000)
+       RETURNING id`,
+      [privateMonitor.id]
+    );
+    const insertedId = rows[0].id;
+    try {
+      const res = await request(app).get("/api/public/incidents").expect(200);
+      const mids = res.body.incidents.map((i) => i.monitorId);
+      expect(mids).not.toContain(privateMonitor.id);
+    } finally {
+      await pool.query("DELETE FROM incidents WHERE id = $1", [insertedId]);
+    }
   });
 
   test("GET /api/public/incidents DOES include incidents for the public monitor", async () => {
-    await storeIncident({
-      monitorId: publicMonitor.id, url: publicMonitor.url,
-      startedAt: Date.now() - 30000, resolvedAt: Date.now(), durationMs: 30000,
-    });
-    const res = await request(app).get("/api/public/incidents").expect(200);
-    const mids = res.body.incidents.map((i) => i.monitorId);
-    expect(mids).toContain(publicMonitor.id);
-    await redisClient.del(monitorIncidentKey(publicMonitor.id));
+    // Seed a resolved incident directly in Postgres for the public monitor.
+    // The endpoint uses getPublicIncidents() which JOINs on is_public=true, so this
+    // row must appear in the response.
+    const { rows } = await pool.query(
+      `INSERT INTO incidents (monitor_id, status, started_at, resolved_at, duration_ms)
+       VALUES ($1, 'RESOLVED', NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '1 minute', 60000)
+       RETURNING id`,
+      [publicMonitor.id]
+    );
+    const insertedId = rows[0].id;
+    try {
+      const res = await request(app).get("/api/public/incidents").expect(200);
+      const mids = res.body.incidents.map((i) => i.monitorId);
+      expect(mids).toContain(publicMonitor.id);
+    } finally {
+      await pool.query("DELETE FROM incidents WHERE id = $1", [insertedId]);
+    }
   });
 });
 

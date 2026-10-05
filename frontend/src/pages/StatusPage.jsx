@@ -2,13 +2,20 @@
  * StatusPage.jsx
  * Public status page — no authentication required.
  * Standalone page, like status.github.com or status.vercel.com.
- * Polls /api/public/status every 30 s.
+ *
+ * Architecture:
+ *   Initial state  → REST GET /api/public/status + GET /api/public/incidents
+ *   Real-time      → Socket.io incident-update events update incident state
+ *                    without a full re-fetch
+ *   Status metrics → polled every 30 s (no Socket.io auth needed for public data)
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { io } from "socket.io-client";
 import { api } from "../api";
 
-const REFRESH_MS = 30_000;
+const REFRESH_MS  = 30_000;
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 
 function barColor(state) {
   if (state === "up")       return "#48bb78";
@@ -23,6 +30,7 @@ export default function StatusPage() {
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const socketRef = useRef(null);
 
   async function fetchStatus() {
     try {
@@ -47,11 +55,35 @@ export default function StatusPage() {
   }
 
   useEffect(() => {
+    // Initial data load
     fetchStatus();
     fetchIncidents();
-    const t1 = setInterval(fetchStatus,   REFRESH_MS);
-    const t2 = setInterval(fetchIncidents, REFRESH_MS);
-    return () => { clearInterval(t1); clearInterval(t2); };
+
+    // Poll status metrics every 30 s
+    const t1 = setInterval(fetchStatus, REFRESH_MS);
+
+    // Real-time incident updates via an unauthenticated Socket.io connection.
+    // The public status page has no user session, so we connect without
+    // credentials and only subscribe to incident-update events.
+    // On 'opened': prepend an ongoing entry.
+    // On 'acknowledged': update status in place.
+    // On 'resolved': replace the ongoing entry with a resolved one.
+    const socket = io(BACKEND_URL, {
+      withCredentials: true,   // sends cookies if present, harmless if not
+      reconnectionDelay:    1000,
+      reconnectionDelayMax: 5000,
+    });
+    socketRef.current = socket;
+
+    socket.on("incident-update", (event) => {
+      setIncidents((prev) => applyIncidentEvent(prev, event));
+    });
+
+    return () => {
+      clearInterval(t1);
+      socket.disconnect();
+      socketRef.current = null;
+    };
   }, []);
 
   const allUp      = data?.services?.every((s) => s.currentStatus === "up");

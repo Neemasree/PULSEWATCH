@@ -44,7 +44,7 @@ PulseWatch is a full-stack monitoring system that lets users register HTTP/HTTPS
 | Monitor management | Authenticated monitor CRUD through `/api/monitors` |
 | URL monitoring | HTTP/HTTPS endpoint checks with 5-second request timeout |
 | SSRF protection | Blocks localhost, private/internal IPs and unsafe DNS resolutions before monitor URLs are saved |
-| Adaptive polling | Per-monitor polling interval grows by ×1.5 while healthy |
+| Adaptive polling | Per-monitor interval grows by ×1.5 while healthy; ceiling is max(60s, configured base interval) |
 | Anomaly detection | Z-score detection with `abs(z) > 3`, after at least 10 readings |
 | Incident tracking | Opens, acknowledges and resolves downtime incidents |
 | Live dashboard | Socket.io pushes metric, polling and incident updates |
@@ -404,7 +404,7 @@ The backend requires both PostgreSQL and Redis.
 ```bash
 cd frontend
 npm install
-npm start
+npm run dev
 ```
 
 ---

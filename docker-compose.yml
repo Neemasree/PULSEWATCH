@@ -91,7 +91,7 @@ services:
       args:
         # Baked into the React bundle at build time — points the browser at
         # the backend's public address (localhost from the user's machine).
-        REACT_APP_BACKEND_URL: "http://localhost:3000"
+        VITE_BACKEND_URL: "http://localhost:3000"
     container_name: pulsewatch-frontend
     restart: unless-stopped
     ports:

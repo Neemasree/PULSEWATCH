@@ -66,7 +66,7 @@ app.use(cors({
     cb(new Error(`CORS: ${origin} not allowed`));
   },
   credentials: true,  // REQUIRED for cookies to be sent cross-origin
-  methods: ["GET", "POST", "DELETE"],
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"],
 }));
 

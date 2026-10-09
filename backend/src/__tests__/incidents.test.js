@@ -19,6 +19,7 @@ require("dotenv").config();
 const request  = require("supertest");
 const jwt      = require("jsonwebtoken");
 const pool     = require("../db/pool");
+const { client: redisClient } = require("../redisClient");
 const { app }  = require("../index");
 const {
   openIncident,
@@ -28,7 +29,7 @@ const {
   getPublicIncidents,
 } = require("../db/incidents");
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "pw-access-dev-secret-change-in-prod";
+const { ACCESS_SECRET } = require("../auth");
 
 function makeAuth(user) {
   const token = jwt.sign(
@@ -93,6 +94,7 @@ afterAll(async () => {
   if (owner) await pool.query("DELETE FROM users WHERE id = $1", [owner.id]);
   if (other) await pool.query("DELETE FROM users WHERE id = $1", [other.id]);
   await pool.end().catch(() => {});
+  redisClient.disconnect();
 });
 
 // ─── Unit: openIncident ───────────────────────────────────────────────────────

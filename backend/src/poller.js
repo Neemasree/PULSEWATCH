@@ -46,6 +46,7 @@ const lastDownAlertTime = new Map(); // monitorId → ms
 let pollingStartTime    = null;
 let totalAdaptiveChecks = 0;
 let _onResultCb         = null;
+let comparisonTimer     = null;
 
 function onResult(cb) { _onResultCb = cb; }
 
@@ -243,10 +244,15 @@ function startPolling() {
     console.log(`[Poller] Stopped monitoring: monitor ${monitor.id} (${monitor.url})`);
   });
 
-  setInterval(logComparisonStats, 5 * 60 * 1000);
+  if (comparisonTimer) clearInterval(comparisonTimer);
+  comparisonTimer = setInterval(logComparisonStats, 5 * 60 * 1000);
 }
 
 function stopPolling() {
+  if (comparisonTimer) {
+    clearInterval(comparisonTimer);
+    comparisonTimer = null;
+  }
   for (const [, s] of monitorState) {
     if (s.timeoutHandle) clearTimeout(s.timeoutHandle);
   }

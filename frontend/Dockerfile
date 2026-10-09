@@ -6,13 +6,12 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-COPY public ./public
 COPY src ./src
 
-# REACT_APP_BACKEND_URL is baked into the JS bundle at build time.
+# VITE_BACKEND_URL is baked into the JS bundle at build time.
 # Pass it as a build arg so docker-compose can set it per environment.
-ARG REACT_APP_BACKEND_URL=http://localhost:3000
-ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+ARG VITE_BACKEND_URL=http://localhost:3000
+ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
 
 RUN npm run build
 
@@ -25,7 +24,7 @@ RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy the built React app from stage 1
-COPY --from=builder /app/build /usr/share/nginx/html
+COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 

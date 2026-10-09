@@ -140,9 +140,10 @@ async function getIncidentsByMonitor({ monitorId, userId, isAdmin, limit = 50 })
  */
 async function getPublicIncidents() {
   const { rows } = await pool.query(
-    `SELECT id, monitor_id, status, started_at, resolved_at, duration_ms
+    `SELECT id, monitor_id, status, started_at, resolved_at, duration_ms, url
      FROM (
        SELECT i.*,
+              m.url,
               ROW_NUMBER() OVER (
                 PARTITION BY i.monitor_id
                 ORDER BY i.started_at DESC

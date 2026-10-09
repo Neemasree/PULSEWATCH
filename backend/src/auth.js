@@ -37,7 +37,7 @@
  * timing is consistent — no timing oracle on username existence).
  *
  * ── User storage ─────────────────────────────────────────────────────────
- * Users are persisted in PostgreSQL (see src/db/migrate.sql).
+ * Users are persisted in PostgreSQL (see migrations/000_users.sql).
  * The bcrypt, JWT, RBAC, and CSRF logic here is storage-agnostic — only
  * the three DB helper functions (findByUsername, createUser, findById) touch
  * the database. Swapping to a different DB only requires changing those three.
@@ -49,9 +49,28 @@ const crypto      = require("crypto"); // built-in Node module — no install ne
 const pool        = require("./db/pool");
 const { client: redisClient } = require("./redisClient");
 
-// Separate secrets per token type
-const ACCESS_SECRET  = process.env.JWT_ACCESS_SECRET  || "pw-access-dev-secret-change-in-prod";
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "pw-refresh-dev-secret-change-in-prod";
+// Separate secrets per token type. Production must provide strong, stable keys;
+// development/test gets per-process keys so missing configuration is never
+// silently converted into a shared credential.
+const IS_PROD = process.env.NODE_ENV === "production";
+function loadSecret(name) {
+  const configured = process.env[name];
+  if (configured) {
+    if (IS_PROD && configured.length < 32) {
+      throw new Error(`${name} must be at least 32 characters in production`);
+    }
+    return configured;
+  }
+  if (IS_PROD) {
+    throw new Error(`${name} is required in production`);
+  }
+  const generated = crypto.randomBytes(48).toString("hex");
+  console.warn(`[Auth] ${name} is not set; generated a random development secret.`);
+  return generated;
+}
+
+const ACCESS_SECRET  = loadSecret("JWT_ACCESS_SECRET");
+const REFRESH_SECRET = loadSecret("JWT_REFRESH_SECRET");
 const ACCESS_EXPIRY  = "15m";
 const REFRESH_EXPIRY = "7d";
 
@@ -109,6 +128,49 @@ async function createUser(username, passwordHash, role, name) {
     [username, passwordHash, role, name]
   );
   return rows[0];
+}
+
+/**
+ * Creates the first admin only when explicitly configured at startup.
+ * The advisory lock prevents duplicate bootstrap admins if two processes
+ * start against the same empty database.
+ */
+async function bootstrapAdmin(customPool = pool) {
+  const username = process.env.ADMIN_USERNAME?.trim();
+  const password = process.env.ADMIN_PASSWORD;
+  if (!username && !password) return null;
+  if (!username || !password) {
+    throw new Error("ADMIN_USERNAME and ADMIN_PASSWORD must be provided together");
+  }
+  if (password.length < 12) {
+    throw new Error("ADMIN_PASSWORD must be at least 12 characters");
+  }
+
+  const client = await customPool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [918273]);
+    const existing = await client.query("SELECT id FROM users WHERE role = 'admin' LIMIT 1");
+    if (existing.rows.length > 0) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const inserted = await client.query(
+      `INSERT INTO users (username, password_hash, role, name)
+       VALUES ($1, $2, 'admin', $3)
+       RETURNING id, username, role, name`,
+      [username, passwordHash, username]
+    );
+    await client.query("COMMIT");
+    return inserted.rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ── Refresh token blacklist (Redis-backed) ──────────────────────────────────
@@ -387,8 +449,6 @@ function csrfProtect(req, res, next) {
 
 // ── Cookie config helpers ─────────────────────────────────────────────────────
 
-const IS_PROD = process.env.NODE_ENV === "production";
-
 const AUTH_COOKIE_OPTS = {
   httpOnly: true,
   secure:   IS_PROD,
@@ -418,7 +478,9 @@ function clearAuthCookies(res) {
 
 module.exports = {
   login, register, rotateRefreshToken, revokeRefreshToken,
+  bootstrapAdmin,
   verifyAccessToken, requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
   blacklist, isBlacklisted, checkLockout, recordFailure, clearFailures,
+  ACCESS_SECRET,
 };

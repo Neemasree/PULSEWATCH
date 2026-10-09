@@ -28,7 +28,7 @@ const {
   _monitorState,
 } = require("../poller");
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "pw-access-dev-secret-change-in-prod";
+const { ACCESS_SECRET } = require("../auth");
 
 function makeAuth(user) {
   const token = jwt.sign(
@@ -63,7 +63,7 @@ afterAll(async () => {
   stopPolling();
   if (owner) await pool.query("DELETE FROM users WHERE id = $1", [owner.id]);
   await pool.end().catch(() => {});
-  await redisClient.quit().catch(() => {});
+  redisClient.disconnect();
 });
 
 // Helper: insert a monitor row and register it in the registry

@@ -15,7 +15,7 @@ const pool = require("../db/pool");
 const { app } = require("../index");
 const { client: redisClient } = require("../redisClient");
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "pw-access-dev-secret-change-in-prod";
+const { ACCESS_SECRET } = require("../auth");
 
 function createAuthContext(user) {
   const token = jwt.sign(
@@ -73,7 +73,7 @@ describe("Monitors API (/api/monitors)", () => {
     if (userB) await pool.query("DELETE FROM users WHERE id = $1", [userB.id]);
     if (adminUser) await pool.query("DELETE FROM users WHERE id = $1", [adminUser.id]);
     await pool.end().catch(() => {});
-    await redisClient.quit().catch(() => {});
+    redisClient.disconnect();
   });
 
   describe("CRUD Happy Paths", () => {

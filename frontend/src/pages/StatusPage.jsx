@@ -10,12 +10,10 @@
  *   Status metrics → polled every 30 s (no Socket.io auth needed for public data)
  */
 
-import React, { useEffect, useRef, useState } from "react";
-import { io } from "socket.io-client";
+import React, { useEffect, useState } from "react";
 import { api } from "../api";
 
 const REFRESH_MS  = 30_000;
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "";
 
 function barColor(state) {
   if (state === "up")       return "#48bb78";
@@ -30,8 +28,6 @@ export default function StatusPage() {
   const [error,       setError]       = useState("");
   const [loading,     setLoading]     = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
-  const socketRef = useRef(null);
-
   async function fetchStatus() {
     try {
       const res = await api.publicStatus();
@@ -60,29 +56,13 @@ export default function StatusPage() {
     fetchIncidents();
 
     // Poll status metrics every 30 s
-    const t1 = setInterval(fetchStatus, REFRESH_MS);
-
-    // Real-time incident updates via an unauthenticated Socket.io connection.
-    // The public status page has no user session, so we connect without
-    // credentials and only subscribe to incident-update events.
-    // On 'opened': prepend an ongoing entry.
-    // On 'acknowledged': update status in place.
-    // On 'resolved': replace the ongoing entry with a resolved one.
-    const socket = io(BACKEND_URL, {
-      withCredentials: true,   // sends cookies if present, harmless if not
-      reconnectionDelay:    1000,
-      reconnectionDelayMax: 5000,
-    });
-    socketRef.current = socket;
-
-    socket.on("incident-update", (event) => {
-      setIncidents((prev) => applyIncidentEvent(prev, event));
-    });
+    const t1 = setInterval(() => {
+      fetchStatus();
+      fetchIncidents();
+    }, REFRESH_MS);
 
     return () => {
       clearInterval(t1);
-      socket.disconnect();
-      socketRef.current = null;
     };
   }, []);
 
@@ -629,7 +609,8 @@ const uc = {
 
 // ── Incident Row ──────────────────────────────────────────────────────────────
 function IncidentRow({ inc }) {
-  const name      = inc.url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
+  const url       = typeof inc.url === "string" ? inc.url : "";
+  const name      = url ? url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] : `Monitor ${inc.monitorId ?? "unknown"}`;
   const startTime = new Date(inc.startedAt);
   const isOngoing = inc.ongoing === true;
 
@@ -654,9 +635,13 @@ function IncidentRow({ inc }) {
         <span style={ih.statusDot(isOngoing)} />
         <div>
           <div style={ih.serviceName}>{name}</div>
-          <a href={inc.url} target="_blank" rel="noopener noreferrer" style={ih.serviceUrl}>
-            {inc.url}
-          </a>
+          {url ? (
+            <a href={url} target="_blank" rel="noopener noreferrer" style={ih.serviceUrl}>
+              {url}
+            </a>
+          ) : (
+            <span style={ih.serviceUrl}>URL unavailable</span>
+          )}
         </div>
       </div>
       <div style={ih.rowMid}>

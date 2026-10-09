@@ -92,7 +92,7 @@ function broadcastMetric(result) {
 }
 
 function broadcastPollingStats(stats) {
-  if (_io) _io.emit("polling-stats", stats);
+  if (_io) _io.to("admin").emit("polling-stats", stats);
 }
 
 /**

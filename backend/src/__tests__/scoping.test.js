@@ -21,7 +21,7 @@ const { notifyMonitorAdded, notifyMonitorRemoved } = require("../endpointRegistr
 const { getMonitorsForUser } = require("../poller");
 const { userRoom }           = require("../socketHandler");
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "pw-access-dev-secret-change-in-prod";
+const { ACCESS_SECRET } = require("../auth");
 
 function makeAuth(user) {
   const token = jwt.sign(
@@ -95,7 +95,7 @@ afterAll(async () => {
   if (adminUser) await pool.query("DELETE FROM users WHERE id = $1", [adminUser.id]);
   await redisClient.del(`metrics:${publicMonitor?.id}`, `metrics:${privateMonitor?.id}`);
   await pool.end().catch(() => {});
-  await redisClient.quit().catch(() => {});
+  redisClient.disconnect();
 });
 
 // ─── Gap 1: Poller driven by Postgres ────────────────────────────────────────

@@ -83,35 +83,38 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {isAdmin && (
-        <section style={s.section}>
-          <SectionTitle>
-            Manage Monitors
-            <span style={s.adminTag}>admin only</span>
-          </SectionTitle>
-          <form onSubmit={handleAddUrl} style={s.addForm}>
-            <input
-              style={s.addInput}
-              type="url"
-              placeholder="https://example.com"
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
-              required
-            />
-            <button style={{ ...s.addBtn, opacity: adding ? 0.6 : 1 }} type="submit" disabled={adding}>
-              {adding ? "Adding…" : "+ Add monitor"}
-            </button>
-          </form>
-          {addError && <div style={s.addError} role="alert">{addError}</div>}
-        </section>
-      )}
+      <section style={s.section}>
+        <SectionTitle>
+          {isAdmin ? "Manage Monitors" : "Add a monitor"}
+          {isAdmin && <span style={s.adminTag}>admin</span>}
+        </SectionTitle>
+        {!monitors.length && (
+          <p style={s.addHint}>
+            Add your first endpoint to see uptime, latency, and incidents here.
+          </p>
+        )}
+        <form onSubmit={handleAddUrl} style={s.addForm}>
+          <input
+            style={s.addInput}
+            type="url"
+            placeholder="https://example.com"
+            value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
+            required
+          />
+          <button style={{ ...s.addBtn, opacity: adding ? 0.6 : 1 }} type="submit" disabled={adding}>
+            {adding ? "Adding…" : "+ Add monitor"}
+          </button>
+        </form>
+        {addError && <div style={s.addError} role="alert">{addError}</div>}
+      </section>
 
       <section style={s.section}>
         <SectionTitle>Monitored Endpoints</SectionTitle>
         {sortedMonitors.length === 0 ? (
           <div style={s.empty}>
             {connected
-              ? "Waiting for first results… (checks run every 5–60s)"
+              ? "No monitors yet. Add your first endpoint above."
               : "Connecting to backend…"}
           </div>
         ) : (
@@ -155,6 +158,7 @@ const s = {
   section:    { marginBottom:"28px" },
   grid:       { display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(330px, 1fr))", gap:"14px" },
   empty:      { color:"#4a5568", textAlign:"center", padding:"48px 0", fontSize:"14px" },
+  addHint:    { color:"#718096", fontSize:"13px", margin:"-4px 0 12px" },
   adminTag:   { fontSize:"10px", fontWeight:700, letterSpacing:"0.07em", background:"#22543d", color:"#68d391", padding:"2px 7px", borderRadius:"4px", marginLeft:"10px" },
   addForm:    { display:"flex", gap:"8px", maxWidth:"520px" },
   addInput:   { flex:1, background:"#0f1117", border:"1px solid #2d3748", borderRadius:"8px", padding:"9px 12px", fontSize:"13px", color:"#e2e8f0", outline:"none" },

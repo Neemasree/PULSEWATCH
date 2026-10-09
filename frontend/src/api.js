@@ -98,7 +98,6 @@ export const api = {
   resumeMonitor:   (id)     => request("POST",   `/api/monitors/${id}/resume`),
   history:         (monitorId, n) => request("GET", `/api/history?monitorId=${monitorId}${n ? `&n=${n}` : ""}`),
   status:          ()       => request("GET",    "/api/status"),
-  check:           (url)    => request("GET",    `/api/check?url=${encodeURIComponent(url)}`),
   incidents:       (monitorId, limit) => request("GET", `/api/incidents?monitorId=${monitorId}${limit ? `&limit=${limit}` : ""}`),
   acknowledgeIncident: (id) => request("POST", `/api/incidents/${id}/acknowledge`),
 };

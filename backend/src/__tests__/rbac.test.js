@@ -11,9 +11,12 @@
 const jwt = require("jsonwebtoken");
 
 // Access the same secret the server uses
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "pw-access-dev-secret-change-in-prod";
+const { ACCESS_SECRET, requireAuth, requireRole } = require("../auth");
+const { client: redisClient } = require("../redisClient");
 
-const { requireAuth, requireRole } = require("../auth");
+afterAll(() => {
+  redisClient.disconnect();
+});
 
 // ─── Lightweight mock req/res/next helpers ────────────────────────────────────
 function makeReq(role, extraHeaders = {}) {

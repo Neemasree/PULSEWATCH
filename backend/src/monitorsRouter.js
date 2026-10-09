@@ -34,6 +34,7 @@ const {
 } = require("./endpointRegistry");
 const { validateUrlSafety } = require("./ssrf");
 const { requireAuth, csrfProtect } = require("./auth");
+const { userRoom } = require("./socketHandler");
 
 const router = express.Router();
 
@@ -95,7 +96,7 @@ const updateMonitorSchema = z
 
 function emitSocketUpdates(req) {
   const io = req.app.get("io");
-  if (io) io.emit("monitors-updated");
+  if (io) io.to(userRoom(req.user.sub)).to("admin").emit("monitors-updated");
 }
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -295,3 +296,4 @@ router.post("/:id/resume", requireAuth, csrfProtect, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.emitSocketUpdates = emitSocketUpdates;

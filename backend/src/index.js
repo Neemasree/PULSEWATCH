@@ -31,12 +31,12 @@ const rateLimit    = require("express-rate-limit");
 
 const {
   login, register, rotateRefreshToken, revokeRefreshToken,
+  bootstrapAdmin,
   requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
 } = require("./auth");
 
-const { pingUrl }               = require("./pinger");
-const { storeMetric, getRecentMetrics, getHourlyBuckets } = require("./redisClient");
+const { getRecentMetrics, getHourlyBuckets } = require("./redisClient");
 const { startPolling, onResult, getPollingState, getOngoingOutages, getMonitorsForUser } = require("./poller");
 const { loadFromDb, getPublicMonitors } = require("./endpointRegistry");
 const { runMigrations }         = require("../scripts/migrate");
@@ -92,11 +92,11 @@ const loginLimiter = rateLimit({
 // Slightly more generous than login (10 attempts) since registration is a one-time
 // action per user, but still limits abuse from a single IP.
 const registerLimiter = rateLimit({
-  windowMs:         15 * 60 * 1000, // 15 minute window
+  windowMs:         5 * 60 * 1000,  // 5 minute window
   max:              10,              // 10 attempts per IP per window
   standardHeaders:  true,
   legacyHeaders:    false,
-  message:          { error: "Too many registration attempts. Try again in 15 minutes." },
+  message:          { error: "Too many registration attempts. Try again in 5 minutes." },
   skipSuccessfulRequests: true,
 });
 
@@ -196,7 +196,6 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
 
 app.get("/api/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.get("/health",     (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
-app.get("/api/debug/cors", (_req, res) => res.json({ allowedOrigins: ALLOWED_ORIGINS }));
 
 /**
  * GET /api/public/status
@@ -259,6 +258,7 @@ app.get("/api/public/incidents", async (_req, res) => {
     // Normalise resolved rows to camelCase for the client
     const resolvedNorm = resolved.map((r) => ({
       monitorId:  r.monitor_id,
+      url:        r.url,
       startedAt:  new Date(r.started_at).getTime(),
       resolvedAt: new Date(r.resolved_at).getTime(),
       durationMs: r.duration_ms,
@@ -331,18 +331,6 @@ app.post("/api/incidents/:id/acknowledge", requireAuth, csrfProtect, async (req,
   }
 });
 
-app.get("/api/check", requireAuth, async (req, res) => {
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: '"url" is required' });
-  try {
-    const result = await pingUrl(url);
-    await storeMetric(url, result).catch(() => {});
-    return res.json(result);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
 app.get("/api/history", requireAuth, async (req, res) => {
   const monitorId = parseInt(req.query.monitorId, 10);
   const n = Math.min(parseInt(req.query.n || "20", 10), 500);
@@ -387,6 +375,8 @@ onResult((result, anomaly) => {
 async function startServer() {
   try {
     await runMigrations();
+    const admin = await bootstrapAdmin();
+    if (admin) console.log(`[Auth] Bootstrapped admin account: ${admin.username}`);
     await loadFromDb();
     httpServer.listen(PORT, () => {
       console.log(`[Server] PulseWatch on http://localhost:${PORT}`);

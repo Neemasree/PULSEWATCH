@@ -26,7 +26,7 @@ describe("Redis-backed Auth State", () => {
       `auth:fails:${testUser}`,
       `auth:lockout:${testUser}`
     );
-    await redisClient.quit().catch(() => {});
+    redisClient.disconnect();
   });
 
   describe("Refresh token JTI blacklist in Redis", () => {

@@ -7,7 +7,7 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "migrate": "node scripts/migrate.js",
-    "test": "jest --runInBand --forceExit",
+    "test": "jest --runInBand",
     "test:watch": "jest --watch"
   },
   "jest": {

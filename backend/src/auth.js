@@ -452,7 +452,7 @@ function csrfProtect(req, res, next) {
 const AUTH_COOKIE_OPTS = {
   httpOnly: true,
   secure:   IS_PROD,
-  sameSite: IS_PROD ? "strict" : "lax",
+  sameSite: IS_PROD ? "none" : "lax",
   path:     "/",
 };
 
@@ -464,7 +464,7 @@ function setAuthCookies(res, accessToken, refreshToken) {
   res.cookie("csrf_token", csrfToken, {
     httpOnly: false,
     secure:   IS_PROD,
-    sameSite: IS_PROD ? "strict" : "lax",
+    sameSite: IS_PROD ? "none" : "lax",
     path:     "/",
     maxAge:   15 * 60 * 1000,
   });

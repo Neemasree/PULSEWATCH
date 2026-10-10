@@ -28,6 +28,9 @@ const cors         = require("cors");
 const helmet       = require("helmet");
 const cookieParser = require("cookie-parser");
 const rateLimit    = require("express-rate-limit");
+const swaggerUi    = require("swagger-ui-express");
+const fs            = require("fs");
+const path          = require("path");
 
 const {
   login, register, rotateRefreshToken, revokeRefreshToken,
@@ -41,8 +44,10 @@ const { startPolling, onResult, getPollingState, getOngoingOutages, getMonitorsF
 const { loadFromDb, getPublicMonitors } = require("./endpointRegistry");
 const { runMigrations }         = require("../scripts/migrate");
 const monitorsRouter            = require("./monitorsRouter");
+const alertChannelsRouter       = require("./alertChannelsRouter");
 const { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate } = require("./socketHandler");
 const { getPublicIncidents, getIncidentsByMonitor, acknowledgeIncident } = require("./db/incidents");
+const { getMaintenanceWindows, createMaintenance, deleteMaintenance } = require("./db/maintenance");
 
 const PORT = process.env.PORT || 3000;
 const rawOrigin = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
@@ -110,6 +115,15 @@ const io = new Server(httpServer, {
 });
 initSocketHandler(io);
 app.set("io", io);
+const openapiDocument = fs.readFileSync(path.join(__dirname, "../openapi.yaml"), "utf8");
+app.get("/api/docs/openapi.yaml", ...(IS_PROD ? [requireAuth, requireRole("admin")] : []), (_req, res) => {
+  res.type("text/yaml").send(openapiDocument);
+});
+const docsMiddleware = IS_PROD ? [requireAuth, requireRole("admin")] : [];
+app.use("/api/docs", ...docsMiddleware, swaggerUi.serve, swaggerUi.setup({
+  openapi: "3.0.3",
+  info: { title: "PulseWatch API", version: "1.0.0" },
+}));
 
 // ─── Auth routes (public — no requireAuth) ────────────────────────────────────
 
@@ -277,6 +291,45 @@ app.get("/api/public/incidents", async (_req, res) => {
 
 // Monitors CRUD API
 app.use("/api/monitors", monitorsRouter);
+app.use("/api/alert-channels", alertChannelsRouter);
+
+app.get("/api/monitors/:id/maintenance", requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid monitor ID" });
+  try {
+    const windows = await getMaintenanceWindows(id, req.user.sub, req.user.role === "admin");
+    if (!windows.length && req.user.role !== "admin") {
+      const monitor = getMonitorsForUser(req.user.sub, false).find((item) => item.id === id);
+      if (!monitor) return res.status(404).json({ error: "Monitor not found" });
+    }
+    return res.json({ windows });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/monitors/:id/maintenance", requireAuth, csrfProtect, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const startsAt = new Date(req.body?.starts_at);
+  const endsAt = new Date(req.body?.ends_at);
+  if (isNaN(id) || isNaN(startsAt.getTime()) || isNaN(endsAt.getTime()) || endsAt <= startsAt) {
+    return res.status(400).json({ error: "Valid starts_at and ends_at with ends_at after starts_at are required" });
+  }
+  try {
+    const window = await createMaintenance({
+      monitorId: id, userId: req.user.sub, isAdmin: req.user.role === "admin",
+      startsAt, endsAt, reason: req.body.reason,
+    });
+    if (!window) return res.status(404).json({ error: "Monitor not found" });
+    return res.status(201).json({ window });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/maintenance/:id", requireAuth, csrfProtect, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ error: "Invalid maintenance ID" });
+  const deleted = await deleteMaintenance(id, req.user.sub, req.user.role === "admin");
+  if (!deleted) return res.status(404).json({ error: "Maintenance window not found" });
+  return res.json({ message: "Maintenance window deleted" });
+});
 
 /**
  * GET /api/incidents?monitorId=<id>&limit=<n>
@@ -285,6 +338,7 @@ app.use("/api/monitors", monitorsRouter);
 app.get("/api/incidents", requireAuth, async (req, res) => {
   const monitorId = parseInt(req.query.monitorId, 10);
   const limit     = Math.min(parseInt(req.query.limit || "50", 10), 200);
+  const before    = req.query.before;
   if (isNaN(monitorId)) return res.status(400).json({ error: '"monitorId" is required' });
 
   const isAdmin  = req.user.role === "admin";
@@ -299,6 +353,7 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
       userId: req.user.sub,
       isAdmin,
       limit,
+      before,
     });
     return res.json({ monitorId, incidents });
   } catch (err) {

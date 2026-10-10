@@ -25,6 +25,9 @@ async function pingUrl(url, options = {}) {
 
   try {
     const requestOptions = {
+      method: options.method || "GET",
+      headers: options.headers || undefined,
+      data: options.body || undefined,
       timeout: options.timeoutMs || 5000,
       maxRedirects: 3,
       httpAgent: new http.Agent({ lookup: safeLookup }),
@@ -32,10 +35,17 @@ async function pingUrl(url, options = {}) {
       // Don't throw on 4xx/5xx so we can report them as "down" with detail
       validateStatus: () => true,
     };
-    const response = await axios.get(url, requestOptions);
+    if (options.keyword) {
+      requestOptions.responseType = "text";
+      requestOptions.maxContentLength = 1024 * 1024;
+      requestOptions.maxBodyLength = 1024 * 1024;
+    }
+    const response = await axios.request({ url, ...requestOptions });
 
     const responseTime = Date.now() - start;
-    const isUp = response.status >= 200 && response.status < 400;
+    const body = typeof response.data === "string" ? response.data : JSON.stringify(response.data ?? "");
+    const keywordMatched = !options.keyword ||
+      (options.keywordMode === "absent" ? !body.includes(options.keyword) : body.includes(options.keyword));
 
     return {
       url,
@@ -43,6 +53,8 @@ async function pingUrl(url, options = {}) {
       httpStatus: response.status,
       responseTime,
       timestamp: new Date().toISOString(),
+      body: options.keyword ? body : undefined,
+      failureReason: keywordMatched ? undefined : "keyword",
     };
   } catch (err) {
     // Network-level failure: ECONNREFUSED, ETIMEDOUT, ENOTFOUND, etc.
@@ -54,7 +66,10 @@ async function pingUrl(url, options = {}) {
       httpStatus: null,
       responseTime,
       timestamp: new Date().toISOString(),
-      error: err.code || err.message, // e.g. "ETIMEDOUT", "ENOTFOUND"
+      error: err.code || err.message,
+      failureReason: err.code === "ETIMEDOUT" || err.code === "ECONNABORTED"
+        ? "timeout"
+        : err.code === "ENOTFOUND" ? "dns" : "connection",
     };
   }
 }

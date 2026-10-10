@@ -89,12 +89,13 @@ async function acknowledgeIncident({ incidentId, userId, isAdmin }) {
   const ownershipClause = isAdmin
     ? ""
     : "AND m.user_id = $2";
-  const params = isAdmin ? [incidentId] : [incidentId, userId];
+  const params = isAdmin ? [incidentId, userId] : [incidentId, userId, userId];
 
   const { rows } = await pool.query(
     `UPDATE incidents i
      SET status           = 'ACKNOWLEDGED',
          acknowledged_at  = NOW(),
+          acknowledged_by  = $${isAdmin ? 2 : 3},
          updated_at       = NOW()
      FROM monitors m
      WHERE i.id = $1
@@ -111,19 +112,23 @@ async function acknowledgeIncident({ incidentId, userId, isAdmin }) {
  * Returns incidents for a single monitor, newest first.
  * Ownership-scoped: regular users can only query their own monitors.
  *
- * @param {{ monitorId: number, userId: number, isAdmin: boolean, limit?: number }} opts
+ * @param {{ monitorId: number, userId: number, isAdmin: boolean, limit?: number, before?: string }} opts
  * @returns {Promise<object[]>}
  */
-async function getIncidentsByMonitor({ monitorId, userId, isAdmin, limit = 50 }) {
+async function getIncidentsByMonitor({ monitorId, userId, isAdmin, limit = 50, before }) {
   const ownershipClause = isAdmin ? "" : "AND m.user_id = $3";
+  const cursorClause = before ? `AND i.started_at < $${isAdmin ? 3 : 4}` : "";
   const params = isAdmin ? [monitorId, limit] : [monitorId, limit, userId];
+  if (before) params.push(new Date(before));
 
   const { rows } = await pool.query(
-    `SELECT i.*
+    `SELECT i.*, u.username AS acknowledged_by_username
      FROM incidents i
      JOIN monitors m ON m.id = i.monitor_id
+     LEFT JOIN users u ON u.id = i.acknowledged_by
      WHERE i.monitor_id = $1
        ${ownershipClause}
+       ${cursorClause}
      ORDER BY i.started_at DESC
      LIMIT $2`,
     params

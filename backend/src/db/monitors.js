@@ -23,6 +23,14 @@ async function createMonitor({
   intervalSeconds = 10,
   expectedStatus = 200,
   isPublic = false,
+  method = "GET",
+  requestHeaders = null,
+  requestBody = null,
+  keyword = null,
+  keywordMode = null,
+  timeoutMs = 5000,
+  failureThreshold = 2,
+  checkSsl = true,
 }) {
   const maxLimit = getMaxMonitorsPerUser();
 
@@ -41,11 +49,14 @@ async function createMonitor({
 
   const { rows } = await pool.query(
     `INSERT INTO monitors (
-       user_id, name, url, interval_seconds, expected_status, enabled, is_public, created_at, updated_at
+       user_id, name, url, interval_seconds, expected_status, enabled, is_public,
+       method, request_headers, request_body, keyword, keyword_mode, timeout_ms,
+       failure_threshold, check_ssl, created_at, updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, true, $6, NOW(), NOW())
+     VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
      RETURNING *`,
-    [userId, name, url, intervalSeconds, expectedStatus, isPublic]
+    [userId, name, url, intervalSeconds, expectedStatus, isPublic, method,
+      requestHeaders, requestBody, keyword, keywordMode, timeoutMs, failureThreshold, checkSsl]
   );
 
   return rows[0];
@@ -118,6 +129,22 @@ async function updateMonitor(id, userId, isAdmin, fields) {
   if (fields.enabled !== undefined) {
     updates.push(`enabled = $${paramIdx++}`);
     values.push(fields.enabled);
+  }
+  const columnMap = {
+    method: "method",
+    requestHeaders: "request_headers",
+    requestBody: "request_body",
+    keyword: "keyword",
+    keywordMode: "keyword_mode",
+    timeoutMs: "timeout_ms",
+    failureThreshold: "failure_threshold",
+    checkSsl: "check_ssl",
+  };
+  for (const [field, column] of Object.entries(columnMap)) {
+    if (fields[field] !== undefined) {
+      updates.push(`${column} = $${paramIdx++}`);
+      values.push(fields[field]);
+    }
   }
 
   updates.push(`updated_at = NOW()`);

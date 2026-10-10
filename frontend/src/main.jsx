@@ -6,6 +6,9 @@ import ProtectedRoute    from "./components/ProtectedRoute";
 import LoginPage         from "./pages/LoginPage";
 import DashboardPage     from "./pages/DashboardPage";
 import StatusPage        from "./pages/StatusPage";
+import MonitorsPage      from "./pages/MonitorsPage";
+import MonitorDetailPage from "./pages/MonitorDetailPage";
+import AlertsPage        from "./pages/AlertsPage";
 
 // StrictMode is re-enabled. It double-invokes effects in development to
 // surface side-effect bugs. AuthContext uses a didFetch.current ref to guard
@@ -26,6 +29,9 @@ createRoot(document.getElementById("root")).render(
               </ProtectedRoute>
             }
           />
+          <Route path="/monitors" element={<ProtectedRoute><MonitorsPage /></ProtectedRoute>} />
+          <Route path="/monitors/:id" element={<ProtectedRoute><MonitorDetailPage /></ProtectedRoute>} />
+          <Route path="/settings/alerts" element={<ProtectedRoute><AlertsPage /></ProtectedRoute>} />
 
           <Route path="/"  element={<Navigate to="/dashboard" replace />} />
           <Route path="*"  element={<Navigate to="/dashboard" replace />} />

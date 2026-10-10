@@ -46,6 +46,12 @@ export default function AppShell({ connected, children }) {
             <span style={s.navIcon}>◈</span>
             {!collapsed && <span style={s.navLabel}>Dashboard</span>}
           </NavLink>
+          <NavLink to="/monitors" style={({ isActive }) => ({ ...s.navLink, background: isActive ? "rgba(79,209,197,0.1)" : "transparent", color: isActive ? "#4FD1C5" : "#5a6478", borderLeft: `2px solid ${isActive ? "#4FD1C5" : "transparent"}` })}>
+            <span style={s.navIcon}>▣</span>{!collapsed && <span style={s.navLabel}>Monitors</span>}
+          </NavLink>
+          <NavLink to="/settings/alerts" style={({ isActive }) => ({ ...s.navLink, background: isActive ? "rgba(79,209,197,0.1)" : "transparent", color: isActive ? "#4FD1C5" : "#5a6478", borderLeft: `2px solid ${isActive ? "#4FD1C5" : "transparent"}` })}>
+            <span style={s.navIcon}>⚙</span>{!collapsed && <span style={s.navLabel}>Alerts</span>}
+          </NavLink>
 
           {/* Status Page — plain anchor so it always opens a new tab, never triggers React Router */}
           <a

@@ -70,6 +70,7 @@ services:
       REDIS_PORT: "6379"
       DATABASE_URL: postgresql://pulsewatch:devpassword@postgres:5432/pulsewatch
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}   # optional; empty string = alerting disabled
+      TRUST_PROXY: ${TRUST_PROXY:-false}
     depends_on:
       redis:
         condition: service_healthy   # wait for Redis healthcheck to pass before starting

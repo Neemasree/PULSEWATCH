@@ -1,5 +1,53 @@
 # PulseWatch
 
+## Monitoring platform
+
+PulseWatch is a cookie-authenticated Node/Express + PostgreSQL + Redis +
+Socket.io uptime monitor with a React/Vite dashboard. Monitors support GET,
+HEAD and POST checks, custom headers/body, expected status, keyword checks,
+timeouts, failure confirmation, anomaly detection, rollups, CSV exports,
+incidents, maintenance windows, and Slack/Discord/generic webhook alerts.
+
+### Architecture
+
+```text
+React/Vite -> Express API + Socket.io -> PostgreSQL (users/config/rollups)
+                                      -> Redis (recent checks/delivery logs)
+                                      -> safe HTTP agents (SSRF/DNS rebinding protection)
+```
+
+### Migrations
+
+Migrations are numbered and applied with `npm run migrate`: `003_monitor_options.sql`,
+`004_rollups.sql`, and `005_alerts_maintenance.sql` add monitor options,
+hourly statistics, alert channels, and maintenance windows.
+
+### Environment
+
+In addition to the existing variables, configure `TRUST_PROXY` (`false` in
+development, usually `1` behind Render/Vercel), `SLACK_WEBHOOK_URL` (optional
+legacy fallback), and the database/Redis connection variables. Production
+requires strong `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` values.
+
+### API and operations
+
+Authenticated monitor, statistics, incident, maintenance, alert-channel and
+CSV routes are documented at `/api/docs` in development (admin-only in
+production). Public status remains available at `/status`.
+
+Run locally:
+
+```text
+docker compose up --build
+cd backend && npm run migrate && npm test
+cd frontend && npm ci && npm run build
+```
+
+Tests resolve real public hostnames unless DNS lookup is mocked by a test.
+Private, loopback, link-local and rebinding addresses are rejected at save and
+connection time. Percentiles in the stats response use the recent 500 Redis
+samples; uptime and averages use hourly PostgreSQL rollups.
+
 **Real-time uptime, latency, incident and anomaly monitoring with adaptive polling.**
 
 PulseWatch is a full-stack monitoring system that lets users register HTTP/HTTPS endpoints, continuously monitor them, visualize live latency/status data, detect statistical anomalies, track incidents, and receive Slack alerts.

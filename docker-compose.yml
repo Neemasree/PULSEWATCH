@@ -38,7 +38,7 @@ services:
     container_name: pulsewatch-postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"                  # expose locally so you can inspect with psql
+      - "15432:5432"                 # avoid conflicts with a host PostgreSQL service
     environment:
       POSTGRES_USER: pulsewatch
       POSTGRES_PASSWORD: devpassword

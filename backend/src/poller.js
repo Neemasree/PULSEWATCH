@@ -27,6 +27,7 @@ const { sendSlackAlert } = require("./alerts");
 const { upsertCheckRollup, deleteOldRollups } = require("./db/rollups");
 const { getActiveMaintenance } = require("./db/maintenance");
 const { notify } = require("./notifier");
+const { inspectCertificate } = require("./sslChecker");
 const { getActiveMonitors, getPublicMonitors, registry } = require("./endpointRegistry");
 // Imported lazily via getter to avoid circular dependency at module load time
 function getBroadcastIncidentUpdate() {
@@ -50,8 +51,31 @@ let pollingStartTime    = null;
 let totalAdaptiveChecks = 0;
 let _onResultCb         = null;
 let comparisonTimer     = null;
+let sslTimer            = null;
 
 function onResult(cb) { _onResultCb = cb; }
+
+async function checkSsl(monitor) {
+  if (monitor.check_ssl === false || !monitor.url.startsWith("https://")) return;
+  const state = monitorState.get(monitor.id);
+  if (!state) return;
+  try {
+    const certificate = await inspectCertificate(monitor.url);
+    state.sslExpiresAt = certificate.sslExpiresAt;
+    state.sslDaysLeft = certificate.sslDaysLeft;
+    for (const threshold of [14, 7, 1]) {
+      if (state.sslDaysLeft <= threshold && !state.sslAlerted[threshold]) {
+        state.sslAlerted[threshold] = true;
+        notify(monitor, "ssl_expiring", {
+          sslDaysLeft: state.sslDaysLeft,
+          sslExpiresAt: state.sslExpiresAt,
+        });
+      }
+    }
+  } catch (err) {
+    console.error(`[SSL] monitor ${monitor.id}: ${err.message}`);
+  }
+}
 
 function baseInterval(monitor) {
   return Math.max(5_000, (monitor.interval_seconds || 10) * 1000);
@@ -75,6 +99,9 @@ function makeState(monitor, preserveDownSince = null) {
     openIncidentId:    null,
     consecutiveFailures: 0,
     failureThreshold: monitor.failure_threshold ?? 2,
+    sslExpiresAt: null,
+    sslDaysLeft: null,
+    sslAlerted: {},
   };
 }
 
@@ -178,6 +205,7 @@ async function checkMonitor(monitorId) {
     if (Date.now() - last > DOWN_ALERT_COOLDOWN_MS) {
       lastDownAlertTime.set(monitorId, Date.now());
       sendSlackAlert(monitor.url, result, null);
+      notify(monitor, "down", result);
     }
   }
 
@@ -280,6 +308,11 @@ function startPolling() {
 
   if (comparisonTimer) clearInterval(comparisonTimer);
   comparisonTimer = setInterval(logComparisonStats, 5 * 60 * 1000);
+  if (sslTimer) clearInterval(sslTimer);
+  sslTimer = setInterval(() => {
+    for (const monitor of getActiveMonitors()) checkSsl(monitor);
+  }, 60 * 60 * 1000);
+  for (const monitor of monitors) checkSsl(monitor);
   deleteOldRollups().catch((err) => console.error(`[Rollup] cleanup failed: ${err.message}`));
 }
 
@@ -287,6 +320,10 @@ function stopPolling() {
   if (comparisonTimer) {
     clearInterval(comparisonTimer);
     comparisonTimer = null;
+  }
+  if (sslTimer) {
+    clearInterval(sslTimer);
+    sslTimer = null;
   }
   for (const [, s] of monitorState) {
     if (s.timeoutHandle) clearTimeout(s.timeoutHandle);
@@ -326,6 +363,13 @@ function getPollingState(userId = null, isAdmin = true) {
   };
 }
 
+function getSslState(monitorId) {
+  const state = monitorState.get(Number(monitorId)) || monitorState.get(String(monitorId));
+  return state
+    ? { sslExpiresAt: state.sslExpiresAt, sslDaysLeft: state.sslDaysLeft }
+    : { sslExpiresAt: null, sslDaysLeft: null };
+}
+
 /**
  * Returns ongoing outages for public monitors only.
  * @returns {Array<{monitorId, url, startedAt, ongoing: true}>}
@@ -358,6 +402,7 @@ module.exports = {
   getPollingState,
   getOngoingOutages,
   getMonitorsForUser,
+  getSslState,
   // Expose for tests
   _monitorState: monitorState,
 };

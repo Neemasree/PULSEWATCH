@@ -237,7 +237,7 @@ app.get("/api/public/status", async (_req, res) => {
           monitorId:     monitor.id,
           url:           monitor.url,
           name:          monitor.name,
-          currentStatus: latest?.status ?? "unknown",
+          currentStatus: latest?.maintenance ? "maintenance" : (latest?.status ?? "unknown"),
           latency:       latest?.responseTime ?? null,
           uptime24h:     upPct(b24),
           uptime7d:      upPct(b7),

@@ -6,14 +6,19 @@ import { api } from "../api";
 export default function MonitorsPage() {
   const [monitors, setMonitors] = useState([]);
   const [search, setSearch] = useState("");
-  const [form, setForm] = useState({ name: "", url: "", interval_seconds: 60, expected_status: 200 });
+  const [form, setForm] = useState({ name: "", url: "", method: "GET", request_body: "", keyword: "", keyword_mode: "present", interval_seconds: 60, expected_status: 200, timeout_ms: 5000, failure_threshold: 2, is_public: false });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   async function load() { try { setMonitors((await api.monitors()).monitors || []); } catch (e) { setError(e.message); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
   async function add(e) {
     e.preventDefault(); setError("");
-    try { await api.createMonitor(form); setForm({ name: "", url: "", interval_seconds: 60, expected_status: 200 }); load(); }
+    try {
+      const payload = { ...form, request_body: form.request_body || null, keyword: form.keyword || null };
+      await api.createMonitor(payload);
+      setForm({ name: "", url: "", method: "GET", request_body: "", keyword: "", keyword_mode: "present", interval_seconds: 60, expected_status: 200, timeout_ms: 5000, failure_threshold: 2, is_public: false });
+      load();
+    }
     catch (e) { setError(e.message); }
   }
   async function toggle(m) {
@@ -30,6 +35,15 @@ export default function MonitorsPage() {
     <p style={s.sub}>Manage endpoints, thresholds and public visibility.</p>
     <form onSubmit={add} style={s.form}>
       {["name", "url"].map((key) => <input key={key} required style={s.input} placeholder={key} type={key === "url" ? "url" : "text"} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />)}
+      <select style={s.input} value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}><option>GET</option><option>HEAD</option><option>POST</option></select>
+      <input style={s.input} type="number" min="5" placeholder="Interval (seconds)" value={form.interval_seconds} onChange={(e) => setForm({ ...form, interval_seconds: Number(e.target.value) })} />
+      <input style={s.input} type="number" min="100" max="599" placeholder="Expected status" value={form.expected_status} onChange={(e) => setForm({ ...form, expected_status: Number(e.target.value) })} />
+      <input style={s.input} type="number" min="1000" max="30000" placeholder="Timeout (ms)" value={form.timeout_ms} onChange={(e) => setForm({ ...form, timeout_ms: Number(e.target.value) })} />
+      <input style={s.input} type="number" min="1" max="10" placeholder="Failure threshold" value={form.failure_threshold} onChange={(e) => setForm({ ...form, failure_threshold: Number(e.target.value) })} />
+      <input style={s.input} placeholder="Keyword (optional)" value={form.keyword} onChange={(e) => setForm({ ...form, keyword: e.target.value })} />
+      <select style={s.input} value={form.keyword_mode} onChange={(e) => setForm({ ...form, keyword_mode: e.target.value })}><option value="present">Keyword present</option><option value="absent">Keyword absent</option></select>
+      {form.method === "POST" && <textarea style={s.input} placeholder="Request body (optional)" value={form.request_body} onChange={(e) => setForm({ ...form, request_body: e.target.value })} />}
+      <label style={s.checkbox}><input type="checkbox" checked={form.is_public} onChange={(e) => setForm({ ...form, is_public: e.target.checked })} /> Public status</label>
       <button style={s.button}>Add monitor</button>
     </form>
     <input style={{ ...s.input, width: "100%", maxWidth: 420, marginBottom: 14 }} placeholder="Search monitors" value={search} onChange={(e) => setSearch(e.target.value)} />

@@ -38,6 +38,7 @@ const { userRoom } = require("./socketHandler");
 const { getRecentMetrics } = require("./redisClient");
 const { getRollups } = require("./db/rollups");
 const { getIncidentsByMonitor } = require("./db/incidents");
+const { getSslState } = require("./poller");
 
 const router = express.Router();
 
@@ -281,7 +282,7 @@ router.get("/:id/stats", requireAuth, async (req, res) => {
       mttrMs: resolved.length ? Math.round(downtime / resolved.length) : null,
       currentStatus: recent[0]?.status || "unknown",
       lastChecked: recent[0]?.timestamp || null,
-      sslDaysLeft: null,
+      ...getSslState(id),
       percentilesBasedOn: "recent-500",
     });
   } catch (err) {

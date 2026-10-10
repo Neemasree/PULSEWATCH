@@ -2,6 +2,7 @@ const axios = require("axios");
 const { client } = require("./redisClient");
 const { getChannel } = require("./db/alertChannels");
 const pool = require("./db/pool");
+const { validateUrlSafety } = require("./ssrf");
 
 async function deliver(channel, event, monitor, result) {
   const payload = channel.type === "slack"
@@ -12,6 +13,7 @@ async function deliver(channel, event, monitor, result) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      await validateUrlSafety(channel.target_url);
       const response = await axios.post(channel.target_url, payload, { timeout: 5000 });
       const delivery = { event, status: "delivered", statusCode: response.status, timestamp: new Date().toISOString() };
       await client.lpush(`alert-deliveries:${channel.id}`, JSON.stringify(delivery));

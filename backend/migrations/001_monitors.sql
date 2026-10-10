@@ -19,20 +19,25 @@ CREATE INDEX IF NOT EXISTS idx_monitors_user_id ON monitors(user_id);
 -- Seed the 5 existing hardcoded URLs as monitors owned by admin user (id: 1) with is_public = true
 INSERT INTO monitors (user_id, name, url, interval_seconds, expected_status, enabled, is_public)
 SELECT 1, 'Google', 'https://www.google.com', 10, 200, true, true
-WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://www.google.com');
+WHERE EXISTS (SELECT 1 FROM users WHERE id = 1)
+  AND NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://www.google.com');
 
 INSERT INTO monitors (user_id, name, url, interval_seconds, expected_status, enabled, is_public)
 SELECT 1, 'GitHub', 'https://www.github.com', 10, 200, true, true
-WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://www.github.com');
+WHERE EXISTS (SELECT 1 FROM users WHERE id = 1)
+  AND NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://www.github.com');
 
 INSERT INTO monitors (user_id, name, url, interval_seconds, expected_status, enabled, is_public)
 SELECT 1, 'Cloudflare', 'https://www.cloudflare.com', 10, 200, true, true
-WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://www.cloudflare.com');
+WHERE EXISTS (SELECT 1 FROM users WHERE id = 1)
+  AND NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://www.cloudflare.com');
 
 INSERT INTO monitors (user_id, name, url, interval_seconds, expected_status, enabled, is_public)
 SELECT 1, 'HTTPBin', 'https://httpbin.org/get', 10, 200, true, true
-WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://httpbin.org/get');
+WHERE EXISTS (SELECT 1 FROM users WHERE id = 1)
+  AND NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://httpbin.org/get');
 
 INSERT INTO monitors (user_id, name, url, interval_seconds, expected_status, enabled, is_public)
 SELECT 1, 'JSONPlaceholder', 'https://jsonplaceholder.typicode.com/posts/1', 10, 200, true, true
-WHERE NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://jsonplaceholder.typicode.com/posts/1');
+WHERE EXISTS (SELECT 1 FROM users WHERE id = 1)
+  AND NOT EXISTS (SELECT 1 FROM monitors WHERE user_id = 1 AND url = 'https://jsonplaceholder.typicode.com/posts/1');

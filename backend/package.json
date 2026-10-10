@@ -14,8 +14,7 @@
     "testEnvironment": "node",
     "testMatch": [
       "**/src/__tests__/**/*.test.js"
-    ],
-    "cacheDirectory": "D:/jest-cache"
+    ]
   },
   "dependencies": {
     "axios": "^1.7.2",

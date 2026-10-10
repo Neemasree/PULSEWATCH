@@ -51,6 +51,9 @@ const IS_PROD = process.env.NODE_ENV === "production";
 
 // ─── Express app ──────────────────────────────────────────────────────────────
 const app = express();
+app.set("trust proxy", process.env.TRUST_PROXY !== undefined
+  ? process.env.TRUST_PROXY
+  : (IS_PROD ? 1 : false));
 
 // 1. Security headers
 app.use(helmet({
@@ -363,7 +366,9 @@ app.get("/api/status", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/polling-stats", requireAuth, (_req, res) => res.json(getPollingState()));
+app.get("/api/polling-stats", requireAuth, (req, res) => {
+  res.json(getPollingState(req.user.sub, req.user.role === "admin"));
+});
 
 // ─── Poller → Socket.io bridge ────────────────────────────────────────────────
 onResult((result, anomaly) => {

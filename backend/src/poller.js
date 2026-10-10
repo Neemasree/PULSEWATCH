@@ -101,10 +101,14 @@ async function checkMonitor(monitorId) {
   state.checkCount++;
   totalAdaptiveChecks++;
 
-  state.readings.push(result.responseTime);
-  if (state.readings.length > READINGS_WINDOW) state.readings.shift();
+  if (result.status !== "down") {
+    state.readings.push(result.responseTime);
+    if (state.readings.length > READINGS_WINDOW) state.readings.shift();
+  }
 
-  const anomaly  = detectAnomaly(state.readings.slice(0, -1), result.responseTime);
+  const anomaly  = result.status === "down"
+    ? { isAnomaly: false, zScore: null }
+    : detectAnomaly(state.readings.slice(0, -1), result.responseTime);
   result.anomaly = anomaly;
 
   await storeMetric(monitorId, result).catch((err) =>
@@ -273,7 +277,7 @@ function logComparisonStats() {
   console.log("─".repeat(60));
 }
 
-function getPollingState() {
+function getPollingState(userId = null, isAdmin = true) {
   const elapsedMs  = pollingStartTime ? Date.now() - pollingStartTime : 0;
   const fixedTotal = Math.floor((elapsedMs / 10_000) * monitorState.size);
   const saved      = fixedTotal - totalAdaptiveChecks;
@@ -282,9 +286,12 @@ function getPollingState() {
     totalAdaptiveChecks,
     fixedTotalChecks:   fixedTotal,
     savedPct: fixedTotal > 0 ? parseFloat(((saved / fixedTotal) * 100).toFixed(1)) : 0,
-    monitorIntervals: Object.fromEntries(
-      [...monitorState.entries()].map(([id, s]) => [id, s.currentIntervalMs])
-    ),
+    monitorIntervals: Object.fromEntries([...monitorState.entries()]
+      .filter(([id]) => {
+        if (userId === null || isAdmin) return true;
+        return getMonitorsForUser(userId, false).some((monitor) => monitor.id === id);
+      })
+      .map(([id, s]) => [id, s.currentIntervalMs])),
   };
 }
 

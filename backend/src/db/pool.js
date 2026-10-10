@@ -30,7 +30,10 @@ const pool = new Pool({
   connectionTimeoutMillis: 5_000,
   // Only use SSL for hosted providers (non-localhost).
   // Local Postgres doesn't have SSL enabled by default.
-  ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes("localhost")
+  ssl: process.env.DATABASE_SSL === "false"
+    ? false
+    : process.env.DATABASE_URL
+      && !/(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(process.env.DATABASE_URL)
     ? { rejectUnauthorized: false }
     : false,
 });

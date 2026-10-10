@@ -5,6 +5,9 @@
  */
 
 const axios = require("axios");
+const http = require("http");
+const https = require("https");
+const { safeLookup } = require("./ssrf");
 
 /**
  * Pings a single URL and returns a result object.
@@ -17,15 +20,19 @@ const axios = require("axios");
  * @param {string} url  The URL to check (must include protocol, e.g. https://)
  * @returns {Promise<{url, status, responseTime, timestamp, error?}>}
  */
-async function pingUrl(url) {
+async function pingUrl(url, options = {}) {
   const start = Date.now(); // high-res wall-clock start
 
   try {
-    const response = await axios.get(url, {
-      timeout: 5000, // 5 s hard timeout — prevents one hung URL blocking others
+    const requestOptions = {
+      timeout: options.timeoutMs || 5000,
+      maxRedirects: 3,
+      httpAgent: new http.Agent({ lookup: safeLookup }),
+      httpsAgent: new https.Agent({ lookup: safeLookup }),
       // Don't throw on 4xx/5xx so we can report them as "down" with detail
       validateStatus: () => true,
-    });
+    };
+    const response = await axios.get(url, requestOptions);
 
     const responseTime = Date.now() - start;
     const isUp = response.status >= 200 && response.status < 400;

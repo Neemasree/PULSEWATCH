@@ -92,7 +92,17 @@ function broadcastMetric(result) {
 }
 
 function broadcastPollingStats(stats) {
-  if (_io) _io.to("admin").emit("polling-stats", stats);
+  if (!_io) return;
+  const owners = new Set(getActiveMonitors().map((monitor) => String(monitor.user_id)));
+  if (owners.size === 0) {
+    _io.to("admin").emit("polling-stats", stats);
+    return;
+  }
+  for (const userId of owners) {
+    const userStats = require("./poller").getPollingState(userId, false);
+    _io.to(userRoom(userId)).emit("polling-stats", userStats);
+  }
+  _io.to("admin").emit("polling-stats", stats);
 }
 
 /**

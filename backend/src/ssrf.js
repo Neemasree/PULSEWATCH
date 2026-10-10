@@ -8,7 +8,7 @@
  *   3. DNS resolution does not point to a loopback, private, or link-local IP
  */
 
-const dns = require("dns").promises;
+const dns = require("dns");
 const net = require("net");
 
 function isPrivateIpv4(ip) {
@@ -117,13 +117,14 @@ async function validateUrlSafety(urlString) {
 
   // DNS resolution check
   try {
-    const records = await dns.lookup(cleanHost, { all: true });
+    const records = await dns.promises.lookup(cleanHost, { all: true });
     for (const record of records) {
       if (isPrivateIp(record.address)) {
         throw new Error(
           `URL hostname resolves to private IP (${record.address}) - SSRF prohibited`
         );
       }
+
     }
   } catch (err) {
     // If DNS resolution itself fails or was rejected
@@ -137,9 +138,29 @@ async function validateUrlSafety(urlString) {
   return parsed;
 }
 
+/**
+ * Node http(s) Agent lookup callback. Validation is repeated at connection
+ * time to prevent DNS rebinding after a URL was saved.
+ */
+function safeLookup(hostname, options, callback) {
+  dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) return callback(err);
+    const records = Array.isArray(addresses) ? addresses : [addresses];
+    const unsafe = records.find((record) => isPrivateIp(record.address));
+    if (unsafe) {
+      const error = new Error(`Hostname resolved to private IP (${unsafe.address})`);
+      error.code = "ERR_SSRF_PRIVATE_IP";
+      return callback(error);
+    }
+    if (options.all) return callback(null, records);
+    return callback(null, records[0].address, records[0].family);
+  });
+}
+
 module.exports = {
   isPrivateIpv4,
   isPrivateIpv6,
   isPrivateIp,
   validateUrlSafety,
+  safeLookup,
 };

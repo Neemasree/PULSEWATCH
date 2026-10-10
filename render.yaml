@@ -28,6 +28,8 @@ services:
         generateValue: true
       - key: SLACK_WEBHOOK_URL
         sync: false
+      - key: TRUST_PROXY
+        value: "1"
 
   - type: keyvalue
     name: pulsewatch-redis

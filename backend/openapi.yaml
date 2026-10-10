@@ -1,0 +1,41 @@
+openapi: 3.0.3
+info:
+  title: PulseWatch API
+  version: 1.0.0
+  description: Cookie-authenticated uptime monitoring API.
+servers:
+  - url: /
+paths:
+  /api/health: { get: { responses: { "200": { description: OK } } } }
+  /api/auth/login: { post: { responses: { "200": { description: Authenticated } } } }
+  /api/auth/register: { post: { responses: { "201": { description: Registered } } } }
+  /api/auth/refresh: { post: { responses: { "200": { description: Refreshed } } } }
+  /api/auth/logout: { post: { responses: { "200": { description: Logged out } } } }
+  /api/auth/me: { get: { responses: { "200": { description: Current user } } } }
+  /api/public/status: { get: { responses: { "200": { description: Public status } } } }
+  /api/public/incidents: { get: { responses: { "200": { description: Public incidents } } } }
+  /api/monitors:
+    get: { responses: { "200": { description: Owned monitors } } }
+    post: { responses: { "201": { description: Monitor created } } }
+  /api/monitors/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { responses: { "200": { description: Monitor } } }
+    patch: { responses: { "200": { description: Monitor updated } } }
+    delete: { responses: { "200": { description: Monitor deleted } } }
+  /api/monitors/{id}/stats: { get: { responses: { "200": { description: Monitor statistics } } } }
+  /api/monitors/{id}/export.csv: { get: { responses: { "200": { description: Check CSV } } } }
+  /api/monitors/{id}/report.csv: { get: { responses: { "200": { description: Rollup CSV } } } }
+  /api/monitors/{id}/maintenance:
+    get: { responses: { "200": { description: Maintenance windows } } }
+    post: { responses: { "201": { description: Maintenance window created } } }
+  /api/maintenance/{id}: { delete: { responses: { "200": { description: Deleted } } } }
+  /api/incidents: { get: { responses: { "200": { description: Incidents } } } }
+  /api/incidents/{id}/acknowledge: { post: { responses: { "200": { description: Acknowledged } } } }
+  /api/alert-channels:
+    get: { responses: { "200": { description: Alert channels } } }
+    post: { responses: { "201": { description: Alert channel created } } }
+  /api/alert-channels/{id}:
+    patch: { responses: { "200": { description: Updated } } }
+    delete: { responses: { "200": { description: Deleted } } }
+  /api/alert-channels/{id}/test: { post: { responses: { "200": { description: Delivery result } } } }
+  /api/alert-channels/{id}/deliveries: { get: { responses: { "200": { description: Delivery log } } } }

@@ -1,0 +1,41 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pulsewatch
+          POSTGRES_PASSWORD: devpassword
+          POSTGRES_DB: pulsewatch
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pulsewatch"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+        working-directory: backend
+      - run: npm run migrate
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://pulsewatch:devpassword@localhost:5432/pulsewatch
+          REDIS_HOST: localhost
+      - run: npm test
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://pulsewatch:devpassword@localhost:5432/pulsewatch
+          REDIS_HOST: localhost
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend

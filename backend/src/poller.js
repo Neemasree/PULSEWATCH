@@ -24,6 +24,9 @@ const { storeMetric }    = require("./redisClient");
 const { openIncident, resolveIncident } = require("./db/incidents");
 const { detectAnomaly }  = require("./anomalyDetector");
 const { sendSlackAlert } = require("./alerts");
+const { upsertCheckRollup, deleteOldRollups } = require("./db/rollups");
+const { getActiveMaintenance } = require("./db/maintenance");
+const { notify } = require("./notifier");
 const { getActiveMonitors, getPublicMonitors, registry } = require("./endpointRegistry");
 // Imported lazily via getter to avoid circular dependency at module load time
 function getBroadcastIncidentUpdate() {
@@ -70,6 +73,8 @@ function makeState(monitor, preserveDownSince = null) {
     lastStatus:        null,
     downSince:         preserveDownSince,
     openIncidentId:    null,
+    consecutiveFailures: 0,
+    failureThreshold: monitor.failure_threshold ?? 2,
   };
 }
 
@@ -87,7 +92,14 @@ async function checkMonitor(monitorId) {
     return;
   }
 
-  const raw = await pingUrl(monitor.url);
+  const raw = await pingUrl(monitor.url, {
+    method: monitor.method,
+    headers: monitor.request_headers,
+    body: monitor.request_body,
+    keyword: monitor.keyword,
+    keywordMode: monitor.keyword_mode,
+    timeoutMs: monitor.timeout_ms,
+  });
 
   // Override status based on expected_status
   const isExpected = raw.httpStatus === state.expectedStatus;
@@ -95,11 +107,19 @@ async function checkMonitor(monitorId) {
     ...raw,
     monitorId,
     url: monitor.url,
-    status: (raw.httpStatus !== null && isExpected) ? "up" : "down",
+    status: (raw.httpStatus !== null && isExpected && !raw.failureReason) ? "up" : "down",
+    failureReason: raw.failureReason || (raw.httpStatus !== null && !isExpected ? "status_mismatch" : undefined),
   };
+  const maintenance = await getActiveMaintenance(monitorId).catch((err) => {
+    console.error(`[Maintenance] ${err.message}`);
+    return null;
+  });
+  if (maintenance) result.maintenance = true;
 
   state.checkCount++;
   totalAdaptiveChecks++;
+  if (result.status === "down") state.consecutiveFailures++;
+  else state.consecutiveFailures = 0;
 
   if (result.status !== "down") {
     state.readings.push(result.responseTime);
@@ -114,15 +134,24 @@ async function checkMonitor(monitorId) {
   await storeMetric(monitorId, result).catch((err) =>
     console.error(`[Storage] ${err.message}`)
   );
+  if (!maintenance) {
+    upsertCheckRollup(monitorId, result).catch((err) =>
+      console.error(`[Rollup] ${err.message}`)
+    );
+  }
 
-  if (anomaly.isAnomaly) sendSlackAlert(monitor.url, result, anomaly.zScore);
+  if (anomaly.isAnomaly && !maintenance) {
+    sendSlackAlert(monitor.url, result, anomaly.zScore);
+    notify(monitor, "anomaly", result);
+  }
 
   // ── Down alert + incident tracking ────────────────────────────────────────
   const wasDown = state.lastStatus === "down";
   const isDown  = result.status === "down";
   const isUp    = result.status === "up";
 
-  if (isDown) {
+  const confirmedDown = !maintenance && isDown && state.consecutiveFailures >= state.failureThreshold;
+  if (confirmedDown) {
     if (!wasDown) {
       state.downSince = new Date(result.timestamp).getTime();
       console.log(`[Incident] Outage started: monitor ${monitorId} (${monitor.url})`);
@@ -152,7 +181,7 @@ async function checkMonitor(monitorId) {
     }
   }
 
-  if (isUp && wasDown && state.downSince !== null) {
+  if (isUp && state.openIncidentId !== null && state.downSince !== null) {
     const resolvedAt  = new Date(result.timestamp).getTime();
     const durationSec = ((resolvedAt - state.downSince) / 1000).toFixed(0);
     if (state.openIncidentId) {
@@ -170,6 +199,7 @@ async function checkMonitor(monitorId) {
         })
         .catch((err) => console.error(`[Incident] resolveIncident failed: ${err.message}`));
       console.log(`[Incident] Resolved: monitor ${monitorId} — ${durationSec}s`);
+      notify(monitor, "recovered", { ...result, downtimeMs: resolvedAt - state.downSince });
     } else {
       console.warn(`[Incident] Resolved but no openIncidentId for monitor ${monitorId} — skipping DB update`);
     }
@@ -177,11 +207,11 @@ async function checkMonitor(monitorId) {
     state.openIncidentId = null;
   }
 
-  state.lastStatus = result.status;
+  if (isUp || confirmedDown) state.lastStatus = result.status;
 
   if (_onResultCb) _onResultCb(result, anomaly);
 
-  const isProblematic = anomaly.isAnomaly || result.status === "down";
+  const isProblematic = anomaly.isAnomaly || confirmedDown;
   const nextInterval  = isProblematic
     ? state.baseIntervalMs
     : Math.min(state.currentIntervalMs * INTERVAL_GROWTH, maxInterval(state.baseIntervalMs));
@@ -250,6 +280,7 @@ function startPolling() {
 
   if (comparisonTimer) clearInterval(comparisonTimer);
   comparisonTimer = setInterval(logComparisonStats, 5 * 60 * 1000);
+  deleteOldRollups().catch((err) => console.error(`[Rollup] cleanup failed: ${err.message}`));
 }
 
 function stopPolling() {

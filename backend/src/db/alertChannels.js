@@ -38,7 +38,7 @@ async function createChannel(data) {
   const { rows } = await pool.query(
     `INSERT INTO alert_channels (user_id, type, name, target_url, enabled, events)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [data.userId, data.type, data.name, data.targetUrl, data.enabled, JSON.stringify(data.events)]
+    [data.userId, data.type, data.name, data.target_url ?? data.targetUrl, data.enabled, JSON.stringify(data.events)]
   );
   return safeChannel(rows[0]);
 }

@@ -33,6 +33,7 @@ export default function MonitorDetailPage() {
       setMaintenanceForm({ starts_at: "", ends_at: "", reason: "" });
     } catch (e) { setError(e.message); }
   }
+  
   if (error) return <AppShell connected><div style={s.error}>{error}</div></AppShell>;
   if (!monitor) return <AppShell connected><div style={s.empty}>Loading monitor…</div></AppShell>;
   const results = monitorData[id] || [];

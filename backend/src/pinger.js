@@ -49,7 +49,7 @@ async function pingUrl(url, options = {}) {
 
     return {
       url,
-      status: isUp ? "up" : "down",
+      status: keywordMatched ? "up" : "down",
       httpStatus: response.status,
       responseTime,
       timestamp: new Date().toISOString(),

@@ -6,6 +6,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
+COPY index.html ./
 COPY src ./src
 
 # VITE_BACKEND_URL is baked into the JS bundle at build time.

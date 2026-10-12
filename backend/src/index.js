@@ -56,9 +56,11 @@ const IS_PROD = process.env.NODE_ENV === "production";
 
 // ─── Express app ──────────────────────────────────────────────────────────────
 const app = express();
-app.set("trust proxy", process.env.TRUST_PROXY !== undefined
-  ? process.env.TRUST_PROXY
-  : (IS_PROD ? 1 : false));
+const rawTrustProxy = process.env.TRUST_PROXY;
+const trustProxy = rawTrustProxy === undefined
+  ? (IS_PROD ? 1 : false)
+  : (rawTrustProxy === "false" ? false : (isNaN(Number(rawTrustProxy)) ? rawTrustProxy : Number(rawTrustProxy)));
+app.set("trust proxy", trustProxy);
 
 // 1. Security headers
 app.use(helmet({
@@ -115,10 +117,13 @@ const io = new Server(httpServer, {
 });
 initSocketHandler(io);
 app.set("io", io);
-const openapiDocument = fs.readFileSync(path.join(__dirname, "../openapi.yaml"), "utf8");
-app.get("/api/docs/openapi.yaml", ...(IS_PROD ? [requireAuth, requireRole("admin")] : []), (_req, res) => {
-  res.type("text/yaml").send(openapiDocument);
-});
+const openapiPath = path.join(__dirname, "../openapi.yaml");
+const openapiDocument = fs.existsSync(openapiPath) ? fs.readFileSync(openapiPath, "utf8") : null;
+if (openapiDocument) {
+  app.get("/api/docs/openapi.yaml", ...(IS_PROD ? [requireAuth, requireRole("admin")] : []), (_req, res) => {
+    res.type("text/yaml").send(openapiDocument);
+  });
+}
 const docsMiddleware = IS_PROD ? [requireAuth, requireRole("admin")] : [];
 app.use("/api/docs", ...docsMiddleware, swaggerUi.serve, swaggerUi.setup({
   openapi: "3.0.3",

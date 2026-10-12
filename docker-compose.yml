@@ -59,6 +59,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pulsewatch-backend
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -69,6 +72,8 @@ services:
       REDIS_HOST: redis              # Docker DNS: container name resolves automatically
       REDIS_PORT: "6379"
       DATABASE_URL: postgresql://pulsewatch:devpassword@postgres:5432/pulsewatch
+      DATABASE_SSL: "false"
+      ALLOWED_ORIGIN: "http://localhost:8080"
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}   # optional; empty string = alerting disabled
       TRUST_PROXY: ${TRUST_PROXY:-false}
     depends_on:

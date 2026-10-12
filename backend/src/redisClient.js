@@ -127,8 +127,21 @@ async function getIncidents(monitorId, count = 20) {
   return raw.map((item) => JSON.parse(item));
 }
 
+/**
+ * Atomically acquires a distributed cooldown lock.
+ * Redis SET NX PX makes this safe across multiple backend processes.
+ * @param {string} key
+ * @param {number} ttlMs
+ * @returns {Promise<boolean>} true only for the process that acquired the cooldown
+ */
+async function acquireCooldown(key, ttlMs) {
+  const result = await client.set(key, String(Date.now()), "PX", ttlMs, "NX");
+  return result === "OK";
+}
+
 module.exports = {
   client,
+  acquireCooldown,
   storeMetric,
   getRecentMetrics,
   getHourlyBuckets,

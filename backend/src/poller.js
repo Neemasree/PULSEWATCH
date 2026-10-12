@@ -20,7 +20,7 @@
  */
 
 const { pingUrl }        = require("./pinger");
-const { storeMetric }    = require("./redisClient");
+const { storeMetric, acquireCooldown } = require("./redisClient");
 const { openIncident, resolveIncident } = require("./db/incidents");
 const { detectAnomaly }  = require("./anomalyDetector");
 const { sendSlackAlert } = require("./alerts");
@@ -45,7 +45,6 @@ const DOWN_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 // source of truth and handles the restart case via openIncident()'s 23505 recovery.
 const monitorState = new Map();
 
-const lastDownAlertTime = new Map(); // monitorId → ms
 
 let pollingStartTime    = null;
 let totalAdaptiveChecks = 0;
@@ -201,12 +200,22 @@ async function checkMonitor(monitorId) {
           .catch((err) => console.error(`[Incident] openIncident failed: ${err.message}`));
       }
     }
-    const last = lastDownAlertTime.get(monitorId) || 0;
-    if (Date.now() - last > DOWN_ALERT_COOLDOWN_MS) {
-      lastDownAlertTime.set(monitorId, Date.now());
-      sendSlackAlert(monitor.url, result, null);
-      notify(monitor, "down", result);
-    }
+    // Persist cooldowns in Redis so separate backend processes do not
+    // independently send the same outage alert.
+    const cooldownKey = `pulsewatch:cooldown:down:${monitorId}`;
+    acquireCooldown(cooldownKey, DOWN_ALERT_COOLDOWN_MS)
+      .then((acquired) => {
+        if (!acquired) return;
+        sendSlackAlert(monitor.url, result, null);
+        notify(monitor, "down", result);
+      })
+      .catch((err) => {
+        // Fail open: an outage notification is more important than suppressing
+        // a duplicate when Redis is temporarily unavailable.
+        console.error(`[AlertCooldown] Redis unavailable for monitor ${monitorId}: ${err.message}`);
+        sendSlackAlert(monitor.url, result, null);
+        notify(monitor, "down", result);
+      });
   }
 
   if (isUp && state.openIncidentId !== null && state.downSince !== null) {

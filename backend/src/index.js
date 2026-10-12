@@ -46,7 +46,7 @@ const { runMigrations }         = require("../scripts/migrate");
 const monitorsRouter            = require("./monitorsRouter");
 const alertChannelsRouter       = require("./alertChannelsRouter");
 const { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate } = require("./socketHandler");
-const { getPublicIncidents, getIncidentsByMonitor, acknowledgeIncident } = require("./db/incidents");
+const { getPublicIncidents, getIncidentsByMonitor, getIncidentEvents, acknowledgeIncident } = require("./db/incidents");
 const { getMaintenanceWindows, createMaintenance, deleteMaintenance } = require("./db/maintenance");
 
 const PORT = process.env.PORT || 3000;
@@ -361,6 +361,29 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
       before,
     });
     return res.json({ monitorId, incidents });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/incidents/:id/events
+ * Returns the durable lifecycle timeline for an incident, ownership-scoped.
+ */
+app.get("/api/incidents/:id/events", requireAuth, async (req, res) => {
+  const incidentId = parseInt(req.params.id, 10);
+  if (isNaN(incidentId)) return res.status(400).json({ error: "Invalid incident ID" });
+
+  try {
+    const events = await getIncidentEvents({
+      incidentId,
+      userId: req.user.sub,
+      isAdmin: req.user.role === "admin",
+    });
+    // An empty timeline may mean the incident does not exist or is not visible
+    // to this user; avoid leaking cross-user incident IDs.
+    if (!events.length) return res.status(404).json({ error: "Incident not found" });
+    return res.json({ incidentId, events });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

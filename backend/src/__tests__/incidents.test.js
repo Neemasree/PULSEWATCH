@@ -27,6 +27,7 @@ const {
   acknowledgeIncident,
   getIncidentsByMonitor,
   getPublicIncidents,
+  getIncidentEvents,
 } = require("../db/incidents");
 
 const { ACCESS_SECRET } = require("../auth");
@@ -263,6 +264,63 @@ describe("POST /api/incidents/:id/acknowledge", () => {
       .expect(404);
     expect(res.body.error).toMatch(/not found/i);
     await pool.query("DELETE FROM incidents WHERE id = $1", [row.id]);
+  });
+});
+
+// ─── Incident event history + MTTA ────────────────────────────────────────────
+
+describe("incident event history and MTTA", () => {
+  let incident;
+
+  beforeAll(async () => {
+    incident = await openIncident({
+      monitorId: publicMonitor.id,
+      startedAt: new Date(Date.now() - 5_000),
+    });
+  });
+
+  afterAll(async () => {
+    if (incident) await pool.query("DELETE FROM incidents WHERE id = $1", [incident.id]);
+  });
+
+  test("records OPENED, ACKNOWLEDGED, and RESOLVED events in order", async () => {
+    let events = await getIncidentEvents({
+      incidentId: incident.id, userId: owner.id, isAdmin: false,
+    });
+    expect(events.map((event) => event.event_type)).toEqual(["OPENED"]);
+
+    const acknowledged = await acknowledgeIncident({
+      incidentId: incident.id, userId: owner.id, isAdmin: false,
+    });
+    expect(acknowledged.status).toBe("ACKNOWLEDGED");
+
+    const resolved = await resolveIncident({
+      incidentId: incident.id, resolvedAt: new Date(),
+    });
+    expect(resolved.status).toBe("RESOLVED");
+
+    events = await getIncidentEvents({
+      incidentId: incident.id, userId: owner.id, isAdmin: false,
+    });
+    expect(events.map((event) => event.event_type)).toEqual([
+      "OPENED", "ACKNOWLEDGED", "RESOLVED",
+    ]);
+    expect(events[1].actor_user_id).toBe(owner.id);
+  });
+
+  test("does not expose another user's incident event timeline", async () => {
+    const events = await getIncidentEvents({
+      incidentId: incident.id, userId: other.id, isAdmin: false,
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  test("calculates MTTA in milliseconds after acknowledgement", async () => {
+    const rows = await getIncidentsByMonitor({
+      monitorId: publicMonitor.id, userId: owner.id, isAdmin: false,
+    });
+    const row = rows.find((item) => item.id === incident.id);
+    expect(Number(row.mtta_ms)).toBeGreaterThanOrEqual(0);
   });
 });
 

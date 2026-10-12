@@ -40,7 +40,13 @@ async function openIncident({ monitorId, startedAt }) {
        RETURNING *`,
       [monitorId, startedAtDate]
     );
-    return rows[0];
+    const incident = rows[0];
+    await recordIncidentEvent({
+      incidentId: incident.id,
+      eventType: "OPENED",
+      metadata: { monitorId, startedAt: startedAtDate.toISOString() },
+    }).catch((eventErr) => console.error(`[IncidentEvents] OPENED event failed: ${eventErr.message}`));
+    return incident;
   } catch (err) {
     // 23505 = unique_violation — duplicate active incident for this monitor
     if (err.code === "23505") {
@@ -75,7 +81,15 @@ async function resolveIncident({ incidentId, resolvedAt }) {
      RETURNING *`,
     [incidentId, resolvedAtDate]
   );
-  return rows[0] ?? null;
+  const incident = rows[0] ?? null;
+  if (incident) {
+    await recordIncidentEvent({
+      incidentId,
+      eventType: "RESOLVED",
+      metadata: { resolvedAt: resolvedAtDate.toISOString(), durationMs: incident.duration_ms },
+    }).catch((eventErr) => console.error(`[IncidentEvents] RESOLVED event failed: ${eventErr.message}`));
+  }
+  return incident;
 }
 
 /**
@@ -105,7 +119,16 @@ async function acknowledgeIncident({ incidentId, userId, isAdmin }) {
      RETURNING i.*`,
     params
   );
-  return rows[0] ?? null;
+  const incident = rows[0] ?? null;
+  if (incident) {
+    await recordIncidentEvent({
+      incidentId: incident.id,
+      eventType: "ACKNOWLEDGED",
+      actorUserId: userId,
+      metadata: { acknowledgedAt: incident.acknowledged_at },
+    }).catch((eventErr) => console.error(`[IncidentEvents] ACKNOWLEDGED event failed: ${eventErr.message}`));
+  }
+  return incident;
 }
 
 /**
@@ -122,7 +145,12 @@ async function getIncidentsByMonitor({ monitorId, userId, isAdmin, limit = 50, b
   if (before) params.push(new Date(before));
 
   const { rows } = await pool.query(
-    `SELECT i.*, u.username AS acknowledged_by_username
+    `SELECT i.*,
+            u.username AS acknowledged_by_username,
+            CASE WHEN i.acknowledged_at IS NOT NULL
+              THEN EXTRACT(EPOCH FROM (i.acknowledged_at - i.started_at)) * 1000
+              ELSE NULL
+            END AS mtta_ms
      FROM incidents i
      JOIN monitors m ON m.id = i.monitor_id
      LEFT JOIN users u ON u.id = i.acknowledged_by
@@ -165,10 +193,48 @@ async function getPublicIncidents() {
   return rows;
 }
 
+/**
+ * Appends a lifecycle event to the durable incident timeline.
+ * Event writes are best-effort at call sites so a history-table issue never
+ * prevents an outage from being recorded or resolved.
+ */
+async function recordIncidentEvent({ incidentId, eventType, actorUserId = null, metadata = {} }) {
+  const { rows } = await pool.query(
+    `INSERT INTO incident_events (incident_id, event_type, actor_user_id, metadata)
+     VALUES ($1, $2, $3, $4::jsonb)
+     RETURNING *`,
+    [incidentId, eventType, actorUserId, JSON.stringify(metadata)]
+  );
+  return rows[0];
+}
+
+/**
+ * Returns an incident's event timeline, enforcing monitor ownership unless admin.
+ */
+async function getIncidentEvents({ incidentId, userId, isAdmin }) {
+  const ownershipClause = isAdmin ? "" : "AND m.user_id = $2";
+  const params = isAdmin ? [incidentId] : [incidentId, userId];
+  const { rows } = await pool.query(
+    `SELECT e.id, e.incident_id, e.event_type, e.actor_user_id,
+            u.username AS actor_username, e.metadata, e.created_at
+     FROM incident_events e
+     JOIN incidents i ON i.id = e.incident_id
+     JOIN monitors m ON m.id = i.monitor_id
+     LEFT JOIN users u ON u.id = e.actor_user_id
+     WHERE e.incident_id = $1
+       ${ownershipClause}
+     ORDER BY e.created_at ASC, e.id ASC`,
+    params
+  );
+  return rows;
+}
+
 module.exports = {
   openIncident,
   resolveIncident,
   acknowledgeIncident,
   getIncidentsByMonitor,
   getPublicIncidents,
+  recordIncidentEvent,
+  getIncidentEvents,
 };

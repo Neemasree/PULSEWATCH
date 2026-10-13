@@ -360,7 +360,7 @@ OpenAPI docs are served at `/api/docs` (open in development, admin-only in produ
 | Auth | `POST /api/auth/register`, `/login`, `/refresh`, `/logout`, `GET /api/auth/me` |
 | Monitors | `GET/POST /api/monitors`, `GET/PATCH/DELETE /api/monitors/:id`, `POST /:id/pause`, `POST /:id/resume` |
 | Monitor data | `GET /api/monitors/:id/stats`, `/export.csv`, `/report.csv`, `GET /api/history?monitorId=`, `GET /api/status` |
-| Incidents | `GET /api/incidents`, `POST /api/incidents/:id/acknowledge` |
+| Incidents | `GET /api/incidents`, `GET /api/incidents/:id/events`, `POST /api/incidents/:id/acknowledge` |
 | Alert channels | `GET/POST /api/alert-channels`, `PATCH/DELETE /:id`, `POST /:id/test`, `GET /:id/deliveries` |
 | Maintenance | `GET/POST /api/monitors/:id/maintenance`, `DELETE /api/maintenance/:id` |
 | Public | `GET /api/public/status`, `GET /api/public/incidents` |
@@ -397,13 +397,15 @@ GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push and pul
 
 ---
 
-## ⚠️ Known limitations
+## ⚠️ Known limitations and current scope
 
-- Polling runs in-process with `setTimeout`; running several backend replicas would poll each monitor more than once. A queue-based scheduler (e.g. BullMQ) is the natural next step.
-- Alert cooldowns and rate limits are in-memory per process.
-- Z-score detection assumes roughly normal latency; skewed data may call for MAD or EWMA.
-- Incidents store opened, acknowledged and resolved timestamps but not a full event log, so MTTA is not reported yet.
-- Email alerts are not implemented.
+- **Single-instance polling:** polling still runs in-process with `setTimeout`. Do not scale the backend horizontally until polling ownership is coordinated through a shared scheduler/queue (for example, BullMQ) or a distributed lease.
+- **Anomaly model:** Z-score detection can be sensitive to skewed latency distributions and small samples. MAD or EWMA is a future improvement; review alerts against your workload before treating them as definitive.
+- **Email alerts:** email delivery is not implemented. Current supported alert channels are Slack, Discord and generic webhooks.
+- **Redis outage behavior:** down-alert cooldown acquisition fails open if Redis is unavailable, prioritizing outage notifications over duplicate suppression during the outage.
+- **MTTA definition:** MTTA is currently calculated from the incident's `started_at` to `acknowledged_at`; incidents that have not been acknowledged have a null MTTA. This is a duration, not a pre-aggregated service-level metric.
+
+The Redis-backed cooldown is shared across backend processes, and incident lifecycle events are persisted in PostgreSQL and available through the ownership-scoped `GET /api/incidents/:id/events` endpoint. These features do not make the polling scheduler multi-instance safe.
 
 ---
 

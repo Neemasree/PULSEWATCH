@@ -106,7 +106,7 @@ function makeState(monitor, preserveDownSince = null) {
 
 // ─── Core check loop ──────────────────────────────────────────────────────────
 
-async function checkMonitor(monitorId) {
+async function performMonitorCheck(monitorId) {
   if (!monitorState.has(monitorId)) return;
 
   const state   = monitorState.get(monitorId);
@@ -265,6 +265,29 @@ async function checkMonitor(monitorId) {
 
   if (monitorState.has(monitorId)) {
     state.timeoutHandle = setTimeout(() => checkMonitor(monitorId), nextInterval);
+  }
+}
+
+// Guard each monitor against overlapping checks and keep its loop alive if an
+// unexpected dependency/runtime error escapes the normal ping error handling.
+async function checkMonitor(monitorId) {
+  const state = monitorState.get(monitorId);
+  if (!state || state.checkInFlight) return;
+
+  state.checkInFlight = true;
+  try {
+    await performMonitorCheck(monitorId);
+  } catch (err) {
+    console.error(`[Poller] monitor ${monitorId} check failed unexpectedly: ${err.message}`);
+    // A failed check must not permanently stop monitoring this endpoint.
+    if (monitorState.get(monitorId) === state && !state.timeoutHandle) {
+      state.timeoutHandle = setTimeout(() => {
+        state.timeoutHandle = null;
+        checkMonitor(monitorId);
+      }, state.baseIntervalMs);
+    }
+  } finally {
+    state.checkInFlight = false;
   }
 }
 

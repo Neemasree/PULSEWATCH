@@ -93,6 +93,7 @@ function makeState(monitor, preserveDownSince = null) {
     readings:          [],
     checkCount:        0,
     timeoutHandle:     null,
+    checkInFlight:     false,
     lastStatus:        null,
     downSince:         preserveDownSince,
     openIncidentId:    null,
@@ -264,7 +265,10 @@ async function performMonitorCheck(monitorId) {
   );
 
   if (monitorState.has(monitorId)) {
-    state.timeoutHandle = setTimeout(() => checkMonitor(monitorId), nextInterval);
+    state.timeoutHandle = setTimeout(() => {
+      state.timeoutHandle = null;
+      checkMonitor(monitorId);
+    }, nextInterval);
   }
 }
 

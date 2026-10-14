@@ -46,7 +46,7 @@ const { runMigrations }         = require("../scripts/migrate");
 const monitorsRouter            = require("./monitorsRouter");
 const alertChannelsRouter       = require("./alertChannelsRouter");
 const { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate } = require("./socketHandler");
-const { getPublicIncidents, getIncidentsByMonitor, getIncidentEvents, acknowledgeIncident } = require("./db/incidents");
+const { getPublicIncidents, getPublicOngoingIncidents, getIncidentsByMonitor, getIncidentEvents, acknowledgeIncident } = require("./db/incidents");
 const { getMaintenanceWindows, createMaintenance, deleteMaintenance } = require("./db/maintenance");
 
 const PORT = process.env.PORT || 3000;
@@ -275,8 +275,19 @@ app.get("/api/public/status", async (_req, res) => {
  */
 app.get("/api/public/incidents", async (_req, res) => {
   try {
-    const resolved = await getPublicIncidents();
-    const ongoing  = getOngoingOutages();
+    const [resolved, ongoingRows] = await Promise.all([
+      getPublicIncidents(),
+      getPublicOngoingIncidents(),
+    ]);
+    // PostgreSQL is authoritative for active incidents. Do not depend on the
+    // poller's in-memory state, which is empty immediately after a restart.
+    const ongoing = ongoingRows.map((row) => ({
+      monitorId: row.monitor_id,
+      url: row.url,
+      startedAt: new Date(row.started_at).getTime(),
+      ongoing: true,
+      status: row.status,
+    }));
     // Normalise resolved rows to camelCase for the client
     const resolvedNorm = resolved.map((r) => ({
       monitorId:  r.monitor_id,

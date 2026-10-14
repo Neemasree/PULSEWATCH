@@ -194,6 +194,26 @@ async function getPublicIncidents() {
 }
 
 /**
+ * Returns active incidents for enabled public monitors.
+ * This query is the durable source of truth for the public outage banner, so
+ * an API restart does not temporarily hide an outage while poller memory warms up.
+ *
+ * @returns {Promise<object[]>}
+ */
+async function getPublicOngoingIncidents() {
+  const { rows } = await pool.query(
+    `SELECT i.id, i.monitor_id, i.status, i.started_at, m.url
+     FROM incidents i
+     JOIN monitors m ON m.id = i.monitor_id
+     WHERE m.is_public = true
+       AND m.enabled = true
+       AND i.status IN ('OPEN', 'ACKNOWLEDGED')
+     ORDER BY i.started_at DESC`
+  );
+  return rows;
+}
+
+/**
  * Appends a lifecycle event to the durable incident timeline.
  * Event writes are best-effort at call sites so a history-table issue never
  * prevents an outage from being recorded or resolved.
@@ -235,6 +255,7 @@ module.exports = {
   acknowledgeIncident,
   getIncidentsByMonitor,
   getPublicIncidents,
+  getPublicOngoingIncidents,
   recordIncidentEvent,
   getIncidentEvents,
 };

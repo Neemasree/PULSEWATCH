@@ -27,6 +27,7 @@ const {
   acknowledgeIncident,
   getIncidentsByMonitor,
   getPublicIncidents,
+  getPublicOngoingIncidents,
   getIncidentEvents,
 } = require("../db/incidents");
 
@@ -328,6 +329,7 @@ describe("incident event history and MTTA", () => {
 
 describe("GET /api/public/incidents", () => {
   let insertedId;
+  let activeIncidentId;
 
   beforeAll(async () => {
     const { rows } = await pool.query(
@@ -337,10 +339,21 @@ describe("GET /api/public/incidents", () => {
       [publicMonitor.id]
     );
     insertedId = rows[0].id;
+
+    // This incident is persisted in PostgreSQL but is not registered in the
+    // poller's in-memory state, simulating an API restart.
+    const active = await pool.query(
+      `INSERT INTO incidents (monitor_id, status, started_at)
+       VALUES ($1, 'OPEN', NOW() - INTERVAL '2 minutes')
+       RETURNING id`,
+      [publicMonitor.id]
+    );
+    activeIncidentId = active.rows[0].id;
   });
 
   afterAll(async () => {
     if (insertedId) await pool.query("DELETE FROM incidents WHERE id = $1", [insertedId]);
+    if (activeIncidentId) await pool.query("DELETE FROM incidents WHERE id = $1", [activeIncidentId]);
   });
 
   test("returns 200 with incidents array (no auth required)", async () => {
@@ -353,5 +366,18 @@ describe("GET /api/public/incidents", () => {
     const found = res.body.incidents.find((i) => i.monitorId === publicMonitor.id && i.resolvedAt);
     expect(found).toBeDefined();
     expect(found.durationMs).toBeGreaterThan(0);
+  });
+
+  test("shows persisted ongoing outages even when poller memory is empty", async () => {
+    const res = await request(app).get("/api/public/incidents").expect(200);
+    const found = res.body.incidents.find((i) => i.monitorId === publicMonitor.id && i.ongoing);
+    expect(found).toBeDefined();
+    expect(found.startedAt).toEqual(expect.any(Number));
+    expect(found.url).toBe(publicMonitor.url);
+  });
+
+  test("ongoing incident query excludes private and disabled monitors", async () => {
+    const active = await getPublicOngoingIncidents();
+    expect(active.every((item) => item.monitor_id !== privateMonitor.id)).toBe(true);
   });
 });

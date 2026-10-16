@@ -233,6 +233,25 @@ describe("GET /api/incidents", () => {
       .attach(request(app).get(`/api/incidents?monitorId=${publicMonitor.id}`))
       .expect(403);
   });
+
+  test.each([
+    ["missing monitor ID", "/api/incidents"],
+    ["malformed monitor ID", "/api/incidents?monitorId=12oops"],
+    ["zero limit", `/api/incidents?monitorId=${publicMonitor.id}&limit=0`],
+    ["negative limit", `/api/incidents?monitorId=${publicMonitor.id}&limit=-1`],
+    ["malformed limit", `/api/incidents?monitorId=${publicMonitor.id}&limit=10oops`],
+    ["invalid cursor timestamp", `/api/incidents?monitorId=${publicMonitor.id}&before=not-a-date`],
+  ])("rejects %s with a clear 400 response", async (_label, url) => {
+    const res = await authOwner.attach(request(app).get(url)).expect(400);
+    expect(res.body.error).toBeTruthy();
+  });
+
+  test("caps large valid limits at 200", async () => {
+    const res = await authOwner
+      .attach(request(app).get(`/api/incidents?monitorId=${publicMonitor.id}&limit=500`))
+      .expect(200);
+    expect(res.body.incidents.length).toBeLessThanOrEqual(200);
+  });
 });
 
 // ─── HTTP: POST /api/incidents/:id/acknowledge ────────────────────────────────

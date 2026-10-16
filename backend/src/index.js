@@ -352,10 +352,26 @@ app.delete("/api/maintenance/:id", requireAuth, csrfProtect, async (req, res) =>
  * Returns incidents for a single monitor (ownership-scoped).
  */
 app.get("/api/incidents", requireAuth, async (req, res) => {
-  const monitorId = parseInt(req.query.monitorId, 10);
-  const limit     = Math.min(parseInt(req.query.limit || "50", 10), 200);
-  const before    = req.query.before;
-  if (isNaN(monitorId)) return res.status(400).json({ error: '"monitorId" is required' });
+  const monitorIdRaw = req.query.monitorId;
+  const limitRaw = req.query.limit ?? "50";
+  const before = req.query.before;
+
+  // Reject malformed query values instead of silently parsing prefixes such
+  // as "12oops" or passing invalid timestamps into PostgreSQL.
+  if (typeof monitorIdRaw !== "string" || !/^\\d+$/.test(monitorIdRaw) || Number(monitorIdRaw) < 1) {
+    return res.status(400).json({ error: '"monitorId" must be a positive integer' });
+  }
+  if (typeof limitRaw !== "string" || !/^\\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
+    return res.status(400).json({ error: '"limit" must be a positive integer' });
+  }
+  if (before !== undefined && (
+    typeof before !== "string" || before.trim() === "" || !Number.isFinite(Date.parse(before))
+  )) {
+    return res.status(400).json({ error: '"before" must be a valid date timestamp' });
+  }
+
+  const monitorId = Number(monitorIdRaw);
+  const limit = Math.min(Number(limitRaw), 200);
 
   const isAdmin  = req.user.role === "admin";
   const monitors = getMonitorsForUser(req.user.sub, isAdmin);

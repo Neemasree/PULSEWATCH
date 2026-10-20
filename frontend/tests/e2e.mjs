@@ -7,11 +7,15 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const pageErrors = [];
 page.on("pageerror", (error) => pageErrors.push(error.message));
 
-const waitForText = (locator, message) => locator.waitFor({ state: "visible", timeout: 20000 }).catch(async () => {
-  const body = await page.locator("body").innerText().catch(() => "");
-  console.error(`E2E diagnostic — ${message}; URL=${page.url()}; body=${body.slice(0, 1800)}`);
-  throw new Error(`Timed out waiting for ${message}`);
-});
+const waitForText = async (locator, message, debugPage = page) => {
+  try {
+    await locator.waitFor({ state: "visible", timeout: 20000 });
+  } catch {
+    const body = await debugPage.locator("body").innerText().catch(() => "");
+    console.error(`E2E diagnostic — ${message}; URL=${debugPage.url()}; body=${body.slice(0, 1800)}`);
+    throw new Error(`Timed out waiting for ${message}`);
+  }
+};
 
 try {
   // Registration, automatic cookie session, dashboard and live socket.
@@ -87,12 +91,17 @@ try {
   const statusPage = await browser.newPage();
   const statusPageErrors = [];
   statusPage.on("pageerror", (error) => statusPageErrors.push(error.message));
+  statusPage.on("console", (message) => console.log(`STATUS CONSOLE [${message.type()}] ${message.text()}`));
+  statusPage.on("response", (response) => {
+    if (response.url().includes("/api/public/status")) console.log(`STATUS API RESPONSE ${response.status()} ${response.url()}`);
+  });
+  statusPage.on("requestfailed", (request) => console.log(`STATUS REQUEST FAILED ${request.url()} ${request.failure()?.errorText}`));
   await statusPage.goto(`${baseUrl}/status`, { waitUntil: "networkidle" });
   const statusApiResponse = await fetch("http://localhost:3000/api/public/status");
   const statusPayload = await statusApiResponse.json();
   console.log("Public status API services:", JSON.stringify(statusPayload.services?.map((service) => ({ name: service.name, url: service.url, currentStatus: service.currentStatus }))));
   console.log("Public status rendered text:", (await statusPage.locator("body").innerText()).slice(0, 1800));
-  await waitForText(statusPage.getByText("example.com", { exact: true }), "public status service");
+  await waitForText(statusPage.getByText("example.com", { exact: true }), "public status service", statusPage);
   assert.deepEqual(statusPageErrors, [], "public status page should not report uncaught JavaScript errors");
   await statusPage.close();
 

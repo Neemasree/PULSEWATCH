@@ -19,8 +19,8 @@ try {
   const password = "TestPassword123!";
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Full Name").fill("QA PulseWatch");
-  await page.getByLabel("Password").fill(password);
-  await page.getByLabel("Confirm Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByLabel("Confirm Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Create account" }).click();
   await waitForText(page.getByRole("heading", { name: "Dashboard" }), "authenticated dashboard");
   await waitForText(page.getByText("Live", { exact: true }), "live socket indicator");

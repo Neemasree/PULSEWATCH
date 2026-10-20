@@ -237,11 +237,12 @@ describe("GET /api/incidents", () => {
   test.each([
     ["missing monitor ID", "/api/incidents"],
     ["malformed monitor ID", "/api/incidents?monitorId=12oops"],
-    ["zero limit", `/api/incidents?monitorId=${publicMonitor.id}&limit=0`],
-    ["negative limit", `/api/incidents?monitorId=${publicMonitor.id}&limit=-1`],
-    ["malformed limit", `/api/incidents?monitorId=${publicMonitor.id}&limit=10oops`],
-    ["invalid cursor timestamp", `/api/incidents?monitorId=${publicMonitor.id}&before=not-a-date`],
-  ])("rejects %s with a clear 400 response", async (_label, url) => {
+    ["zero limit", "/api/incidents?monitorId={monitorId}&limit=0"],
+    ["negative limit", "/api/incidents?monitorId={monitorId}&limit=-1"],
+    ["malformed limit", "/api/incidents?monitorId={monitorId}&limit=10oops"],
+    ["invalid cursor timestamp", "/api/incidents?monitorId={monitorId}&before=not-a-date"],
+  ])("rejects %s with a clear 400 response", async (_label, urlTemplate) => {
+    const url = urlTemplate.replaceAll("{monitorId}", String(publicMonitor.id));
     const res = await authOwner.attach(request(app).get(url)).expect(400);
     expect(res.body.error).toBeTruthy();
   });

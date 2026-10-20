@@ -10,10 +10,10 @@ page.on("pageerror", (error) => pageErrors.push(error.message));
 const waitForText = async (locator, message, debugPage = page) => {
   try {
     await locator.waitFor({ state: "visible", timeout: 20000 });
-  } catch {
+  } catch (error) {
     const body = await debugPage.locator("body").innerText().catch(() => "");
     console.error(`E2E diagnostic — ${message}; URL=${debugPage.url()}; body=${body.slice(0, 1800)}`);
-    throw new Error(`Timed out waiting for ${message}`);
+    throw new Error(`Failed waiting for ${message}: ${error.message}`);
   }
 };
 
@@ -103,7 +103,7 @@ try {
   console.log("Public status rendered text:", (await statusPage.locator("body").innerText()).slice(0, 1800));
   console.log("Public status root HTML:", (await statusPage.locator("#root").innerHTML()).slice(0, 5000));
   console.log("Public status uncaught errors so far:", JSON.stringify(statusPageErrors));
-  await waitForText(statusPage.getByText("example.com", { exact: true }), "public status service", statusPage);
+  await waitForText(statusPage.getByText("example.com", { exact: true }).first(), "public status service", statusPage);
   assert.deepEqual(statusPageErrors, [], "public status page should not report uncaught JavaScript errors");
   await statusPage.close();
 

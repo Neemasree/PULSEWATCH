@@ -66,12 +66,14 @@ export default function StatusPage() {
     };
   }, []);
 
-  const allUp      = data?.services?.every((s) => s.currentStatus === "up");
-  const anyDown    = data?.services?.some((s) => s.currentStatus === "down");
+  const hasServices = (data?.services?.length ?? 0) > 0;
+  const allUp = hasServices && data.services.every((service) => service.currentStatus === "up");
+  const anyDown = data?.services?.some((service) => service.currentStatus === "down") ?? false;
   const overallStatus = loading ? "loading"
-    : error       ? "error"
-    : anyDown     ? "down"
-    : !allUp      ? "degraded"
+    : error ? "error"
+    : !hasServices ? "empty"
+    : anyDown ? "down"
+    : !allUp ? "degraded"
     : "operational";
 
   return (
@@ -105,6 +107,7 @@ export default function StatusPage() {
                 : overallStatus === "degraded"   ? "Partial System Degradation"
                 : overallStatus === "down"        ? "Service Disruption"
                 : overallStatus === "loading"     ? "Checking systems…"
+                : overallStatus === "empty"       ? "No Public Services Configured"
                 : "Unable to fetch status"}
             </h1>
             {lastUpdated && (
@@ -134,6 +137,9 @@ export default function StatusPage() {
               <div style={{ fontSize: "13px", opacity: 0.8 }}>{error}</div>
             </div>
           </div>
+        )}
+        {data && !hasServices && !loading && !error && (
+          <div style={s.placeholder}>No public services have been configured yet.</div>
         )}
 
         {/* Services section */}

@@ -15,7 +15,7 @@ try {
   // Registration, automatic cookie session, dashboard and live socket.
   await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Register" }).click();
-  const username = `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const username = `qa${Date.now().toString().slice(-10)}${Math.random().toString(36).slice(2, 6)}`;
   const password = "TestPassword123!";
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Full Name").fill("QA PulseWatch");

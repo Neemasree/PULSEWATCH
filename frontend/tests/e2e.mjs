@@ -85,8 +85,15 @@ try {
 
   // Public status page must show the public monitor without requiring auth.
   const statusPage = await browser.newPage();
+  const statusPageErrors = [];
+  statusPage.on("pageerror", (error) => statusPageErrors.push(error.message));
   await statusPage.goto(`${baseUrl}/status`, { waitUntil: "networkidle" });
+  const statusApiResponse = await fetch("http://localhost:3000/api/public/status");
+  const statusPayload = await statusApiResponse.json();
+  console.log("Public status API services:", JSON.stringify(statusPayload.services?.map((service) => ({ name: service.name, url: service.url, currentStatus: service.currentStatus }))));
+  console.log("Public status rendered text:", (await statusPage.locator("body").innerText()).slice(0, 1800));
   await waitForText(statusPage.getByText("example.com", { exact: true }), "public status service");
+  assert.deepEqual(statusPageErrors, [], "public status page should not report uncaught JavaScript errors");
   await statusPage.close();
 
   // Confirm monitor survives navigation/reload, then logout protects private routes.

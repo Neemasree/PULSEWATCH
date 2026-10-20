@@ -358,10 +358,10 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
 
   // Reject malformed query values instead of silently parsing prefixes such
   // as "12oops" or passing invalid timestamps into PostgreSQL.
-  if (typeof monitorIdRaw !== "string" || !/^\\d+$/.test(monitorIdRaw) || Number(monitorIdRaw) < 1) {
+  if (typeof monitorIdRaw !== "string" || !/^\d+$/.test(monitorIdRaw) || Number(monitorIdRaw) < 1) {
     return res.status(400).json({ error: '"monitorId" must be a positive integer' });
   }
-  if (typeof limitRaw !== "string" || !/^\\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
+  if (typeof limitRaw !== "string" || !/^\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
     return res.status(400).json({ error: '"limit" must be a positive integer' });
   }
   if (before !== undefined && (

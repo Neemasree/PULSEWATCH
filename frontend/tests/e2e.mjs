@@ -7,7 +7,9 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const pageErrors = [];
 page.on("pageerror", (error) => pageErrors.push(error.message));
 
-const waitForText = (locator, message) => locator.waitFor({ state: "visible", timeout: 20000 }).catch(() => {
+const waitForText = (locator, message) => locator.waitFor({ state: "visible", timeout: 20000 }).catch(async () => {
+  const body = await page.locator("body").innerText().catch(() => "");
+  console.error(`E2E diagnostic — ${message}; URL=${page.url()}; body=${body.slice(0, 1800)}`);
   throw new Error(`Timed out waiting for ${message}`);
 });
 

@@ -103,4 +103,10 @@ jobs:
             exit 1
           fi
           cd frontend
-          node tests/e2e.mjs
+          node tests/e2e.mjs || {
+            echo "Browser E2E failed; backend log:"
+            cat /tmp/pulsewatch-api.log
+            echo "Frontend log:"
+            cat /tmp/pulsewatch-ui.log
+            exit 1
+          }

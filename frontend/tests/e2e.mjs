@@ -31,7 +31,7 @@ try {
   await waitForText(page.getByText("example.com", { exact: true }), "dashboard monitor card");
 
   // Monitors page: create, pause, resume and delete.
-  await page.getByRole("link", { name: "Monitors", exact: true }).click();
+  await page.getByRole("link", { name: /Monitors/ }).click();
   await waitForText(page.getByRole("heading", { name: "Monitors" }), "monitors page");
   const addForm = page.locator("form").first();
   await addForm.locator('input[placeholder="name"]').fill("qa-crud-monitor");
@@ -66,7 +66,7 @@ try {
   await page.getByText("QA maintenance window", { exact: true }).waitFor({ state: "detached", timeout: 10000 });
 
   // Alerts: reject a loopback webhook target, create a safe channel, then delete it.
-  await page.getByRole("link", { name: "Alerts", exact: true }).click();
+  await page.getByRole("link", { name: /Alerts/ }).click();
   await waitForText(page.getByRole("heading", { name: "Alert channels" }), "alert channels page");
   const alertForm = page.locator("form").first();
   await alertForm.locator('input[placeholder="Name"]').fill("qa-unsafe-channel");

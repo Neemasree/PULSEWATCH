@@ -101,6 +101,8 @@ try {
   const statusPayload = await statusApiResponse.json();
   console.log("Public status API services:", JSON.stringify(statusPayload.services?.map((service) => ({ name: service.name, url: service.url, currentStatus: service.currentStatus }))));
   console.log("Public status rendered text:", (await statusPage.locator("body").innerText()).slice(0, 1800));
+  console.log("Public status root HTML:", (await statusPage.locator("#root").innerHTML()).slice(0, 5000));
+  console.log("Public status uncaught errors so far:", JSON.stringify(statusPageErrors));
   await waitForText(statusPage.getByText("example.com", { exact: true }), "public status service", statusPage);
   assert.deepEqual(statusPageErrors, [], "public status page should not report uncaught JavaScript errors");
   await statusPage.close();

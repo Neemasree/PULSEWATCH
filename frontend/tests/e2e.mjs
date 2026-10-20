@@ -18,6 +18,13 @@ const waitForText = async (locator, message, debugPage = page) => {
 };
 
 try {
+  // Empty public status must not falsely claim that every system is operational.
+  const emptyStatusPage = await browser.newPage();
+  await emptyStatusPage.goto(`${baseUrl}/status`, { waitUntil: "networkidle" });
+  await waitForText(emptyStatusPage.getByRole("heading", { name: "No Public Services Configured" }), "empty public status state", emptyStatusPage);
+  await waitForText(emptyStatusPage.getByText("No public services have been configured yet.", { exact: true }), "empty status explanation", emptyStatusPage);
+  await emptyStatusPage.close();
+
   // Registration, automatic cookie session, dashboard and live socket.
   await page.goto(`${baseUrl}/login`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Register" }).click();

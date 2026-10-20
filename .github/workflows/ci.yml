@@ -39,3 +39,68 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+
+  browser-e2e:
+    name: Browser end-to-end workflows
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pulsewatch
+          POSTGRES_PASSWORD: devpassword
+          POSTGRES_DB: pulsewatch
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pulsewatch"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+        working-directory: backend
+      - run: npm run migrate
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://pulsewatch:devpassword@localhost:5432/pulsewatch
+          REDIS_HOST: localhost
+      - run: npm ci
+        working-directory: frontend
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Start services and test real browser flows
+        env:
+          DATABASE_URL: postgresql://pulsewatch:devpassword@localhost:5432/pulsewatch
+          REDIS_HOST: localhost
+          NODE_ENV: test
+          JWT_ACCESS_SECRET: ci-only-pulsewatch-access-secret-32-characters
+          JWT_REFRESH_SECRET: ci-only-pulsewatch-refresh-secret-32-characters
+          ALLOWED_ORIGIN: http://localhost:5173
+          PORT: 3000
+          VITE_BACKEND_URL: http://localhost:3000
+        run: |
+          (cd backend && npm start > /tmp/pulsewatch-api.log 2>&1) &
+          (cd frontend && npm run dev -- --host 127.0.0.1 > /tmp/pulsewatch-ui.log 2>&1) &
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://localhost:3000/health >/dev/null && curl -fsS http://localhost:5173/login >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "Application failed to start"
+            cat /tmp/pulsewatch-api.log
+            cat /tmp/pulsewatch-ui.log
+            exit 1
+          fi
+          cd frontend
+          node tests/e2e.mjs

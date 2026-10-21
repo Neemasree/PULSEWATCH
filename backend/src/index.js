@@ -398,8 +398,11 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
  * Returns the durable lifecycle timeline for an incident, ownership-scoped.
  */
 app.get("/api/incidents/:id/events", requireAuth, async (req, res) => {
-  const incidentId = parseInt(req.params.id, 10);
-  if (isNaN(incidentId)) return res.status(400).json({ error: "Invalid incident ID" });
+  const incidentIdRaw = req.params.id;
+  if (!/^\\d+$/.test(incidentIdRaw) || !Number.isSafeInteger(Number(incidentIdRaw)) || Number(incidentIdRaw) < 1) {
+    return res.status(400).json({ error: "Incident ID must be a positive integer" });
+  }
+  const incidentId = Number(incidentIdRaw);
 
   try {
     const events = await getIncidentEvents({

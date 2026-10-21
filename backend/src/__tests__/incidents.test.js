@@ -329,6 +329,23 @@ describe("incident event history and MTTA", () => {
     expect(events[1].actor_user_id).toBe(owner.id);
   });
 
+  test("returns the incident timeline through the authenticated API", async () => {
+    const res = await authOwner
+      .attach(request(app).get(`/api/incidents/${incident.id}/events`))
+      .expect(200);
+    expect(res.body.incidentId).toBe(incident.id);
+    expect(res.body.events.map((event) => event.event_type)).toContain("OPENED");
+  });
+
+  test.each(["12oops", "0", "-1", "9007199254740992"])(
+    "rejects invalid incident event ID %s", async (id) => {
+      const res = await authOwner
+        .attach(request(app).get(`/api/incidents/${id}/events`))
+        .expect(400);
+      expect(res.body.error).toMatch(/positive integer/i);
+    }
+  );
+
   test("does not expose another user's incident event timeline", async () => {
     const events = await getIncidentEvents({
       incidentId: incident.id, userId: other.id, isAdmin: false,

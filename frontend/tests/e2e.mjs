@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import assert from "node:assert/strict";
 
 const baseUrl = process.env.E2E_BASE_URL || "http://localhost:5173";
+const apiBaseUrl = process.env.E2E_API_URL || process.env.VITE_BACKEND_URL || "http://localhost:3000";
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 const pageErrors = [];
@@ -104,7 +105,7 @@ try {
   });
   statusPage.on("requestfailed", (request) => console.log(`STATUS REQUEST FAILED ${request.url()} ${request.failure()?.errorText}`));
   await statusPage.goto(`${baseUrl}/status`, { waitUntil: "networkidle" });
-  const statusApiResponse = await fetch("http://localhost:3000/api/public/status");
+  const statusApiResponse = await fetch(`${apiBaseUrl}/api/public/status`);
   const statusPayload = await statusApiResponse.json();
   console.log("Public status API services:", JSON.stringify(statusPayload.services?.map((service) => ({ name: service.name, url: service.url, currentStatus: service.currentStatus }))));
   console.log("Public status rendered text:", (await statusPage.locator("body").innerText()).slice(0, 1800));

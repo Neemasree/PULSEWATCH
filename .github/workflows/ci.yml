@@ -85,6 +85,7 @@ jobs:
           ALLOWED_ORIGIN: http://localhost:5173
           PORT: 3000
           VITE_BACKEND_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:3000
         run: |
           (cd backend && npm start > /tmp/pulsewatch-api.log 2>&1) &
           (cd frontend && npm run dev -- --host 127.0.0.1 > /tmp/pulsewatch-ui.log 2>&1) &

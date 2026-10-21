@@ -399,7 +399,7 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
  */
 app.get("/api/incidents/:id/events", requireAuth, async (req, res) => {
   const incidentIdRaw = req.params.id;
-  if (!/^\\d+$/.test(incidentIdRaw) || !Number.isSafeInteger(Number(incidentIdRaw)) || Number(incidentIdRaw) < 1) {
+  if (!/^[0-9]+$/.test(incidentIdRaw) || !Number.isSafeInteger(Number(incidentIdRaw)) || Number(incidentIdRaw) < 1) {
     return res.status(400).json({ error: "Incident ID must be a positive integer" });
   }
   const incidentId = Number(incidentIdRaw);

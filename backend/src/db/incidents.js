@@ -10,15 +10,12 @@
  *      error code 23505 (unique_violation) and recovers the existing row
  *      instead of crashing.
  *
- * Restart-persistence note (Phase 4):
- *   OPEN/ACKNOWLEDGED incidents survive server restarts (they are in Postgres).
- *   The in-memory openIncidentId in poller.js does NOT survive restarts.
- *   On the first DOWN check after restart the poller will call openIncident();
- *   the unique index will reject the duplicate and this function will return
- *   the existing OPEN row. The public status page ongoing-outage banner is
- *   driven by in-memory state and may be absent immediately after restart
- *   until the next DOWN check fires. Startup reconciliation is deferred to a
- *   future phase.
+ * Restart persistence:
+ *   OPEN/ACKNOWLEDGED incidents survive server restarts in PostgreSQL.
+ *   The poller's openIncidentId cache is in-memory, so it is not authoritative
+ *   after a restart. The public status page reads ongoing incidents from
+ *   PostgreSQL, avoiding a missing outage banner while the poller warms up.
+ *   A database unique index prevents duplicate active incidents per monitor.
  */
 
 const pool = require("./pool");

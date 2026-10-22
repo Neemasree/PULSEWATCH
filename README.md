@@ -8,10 +8,8 @@ Adaptive polling · Z-score anomaly detection · Incident lifecycle · SSL & mai
 
 <br/>
 
-[![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Open_App-22c55e?style=for-the-badge)](https://YOUR-VERCEL-URL)
-[![API](https://img.shields.io/badge/API-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://YOUR-RENDER-URL/health)
 [![CI](https://img.shields.io/github/actions/workflow/status/Neemasree/PULSEWATCH/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Neemasree/PULSEWATCH/actions)
-[![Tests](https://img.shields.io/badge/tests-119_passing-22c55e?style=for-the-badge&logo=jest&logoColor=white)](#-testing--ci)
+[![Tests](https://img.shields.io/badge/tests-verified_in_CI-22c55e?style=for-the-badge&logo=jest&logoColor=white)](#-testing--ci)
 
 ![React](https://img.shields.io/badge/React_18-20232A?style=flat-square&logo=react&logoColor=61DAFB)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white)
@@ -39,7 +37,7 @@ Adaptive polling · Z-score anomaly detection · Incident lifecycle · SSL & mai
 | Metric | Value |
 |---|---|
 | **Check volume reduction** (adaptive vs fixed 10s polling) | **82%**: 188 adaptive checks vs 1,031 for the fixed baseline |
-| Test suite | **119 tests** across 9 suites, run against real PostgreSQL and Redis in CI |
+| Automated tests | Backend Jest tests and browser end-to-end workflows run in GitHub Actions against PostgreSQL and Redis |
 | Anomaly detector coverage | **100%** statements, branches, functions and lines |
 
 > Measured in a local run with 6 healthy monitors. The baseline is a hypothetical fixed 10-second poll, and the figure reflects steady state with healthy monitors; failing or anomalous monitors poll faster, which lowers the saving.

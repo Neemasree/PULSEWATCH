@@ -451,9 +451,19 @@ app.post("/api/incidents/:id/acknowledge", requireAuth, csrfProtect, async (req,
 });
 
 app.get("/api/history", requireAuth, async (req, res) => {
-  const monitorId = parseInt(req.query.monitorId, 10);
-  const n = Math.min(parseInt(req.query.n || "20", 10), 500);
-  if (isNaN(monitorId)) return res.status(400).json({ error: '"monitorId" is required' });
+  const monitorIdRaw = req.query.monitorId;
+  const limitRaw = req.query.n ?? "20";
+  if (typeof monitorIdRaw !== "string" || !/^[0-9]+$/.test(monitorIdRaw) ||
+      !Number.isSafeInteger(Number(monitorIdRaw)) || Number(monitorIdRaw) < 1) {
+    return res.status(400).json({ error: '"monitorId" must be a positive integer' });
+  }
+  if (typeof limitRaw !== "string" || !/^[0-9]+$/.test(limitRaw) ||
+      !Number.isSafeInteger(Number(limitRaw)) || Number(limitRaw) < 1) {
+    return res.status(400).json({ error: '"n" must be a positive integer' });
+  }
+
+  const monitorId = Number(monitorIdRaw);
+  const n = Math.min(Number(limitRaw), 500);
 
   const isAdmin  = req.user.role === "admin";
   const monitors = getMonitorsForUser(req.user.sub, isAdmin);

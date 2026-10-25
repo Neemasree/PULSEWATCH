@@ -358,7 +358,7 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
 
   // Reject malformed query values instead of silently parsing prefixes such
   // as "12oops" or passing invalid timestamps into PostgreSQL.
-  if (typeof monitorIdRaw !== "string" || !/^\d+$/.test(monitorIdRaw) || Number(monitorIdRaw) < 1) {
+  if (typeof monitorIdRaw !== "string" || !/^[0-9]+$/.test(monitorIdRaw) || !Number.isSafeInteger(Number(monitorIdRaw)) || Number(monitorIdRaw) < 1) {
     return res.status(400).json({ error: '"monitorId" must be a positive integer' });
   }
   if (typeof limitRaw !== "string" || !/^\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
@@ -424,8 +424,11 @@ app.get("/api/incidents/:id/events", requireAuth, async (req, res) => {
  * Acknowledges an OPEN incident (ownership-scoped).
  */
 app.post("/api/incidents/:id/acknowledge", requireAuth, csrfProtect, async (req, res) => {
-  const incidentId = parseInt(req.params.id, 10);
-  if (isNaN(incidentId)) return res.status(400).json({ error: "Invalid incident ID" });
+  const incidentIdRaw = req.params.id;
+  if (!/^[0-9]+$/.test(incidentIdRaw) || !Number.isSafeInteger(Number(incidentIdRaw)) || Number(incidentIdRaw) < 1) {
+    return res.status(400).json({ error: "Incident ID must be a positive integer" });
+  }
+  const incidentId = Number(incidentIdRaw);
 
   try {
     const isAdmin  = req.user.role === "admin";

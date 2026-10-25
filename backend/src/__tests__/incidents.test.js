@@ -197,6 +197,24 @@ describe("getPublicIncidents — per-monitor limit via ROW_NUMBER", () => {
   });
 });
 
+// ─── HTTP: GET /api/history query validation ──────────────────────────────────
+
+describe("GET /api/history query validation", () => {
+  test.each([
+    ["missing monitor ID", "/api/history"],
+    ["malformed monitor ID", "/api/history?monitorId=12oops"],
+    ["zero monitor ID", "/api/history?monitorId=0"],
+    ["unsafe monitor ID", "/api/history?monitorId=9007199254740992"],
+    ["zero history limit", "/api/history?monitorId=1&n=0"],
+    ["negative history limit", "/api/history?monitorId=1&n=-1"],
+    ["malformed history limit", "/api/history?monitorId=1&n=10oops"],
+    ["unsafe history limit", "/api/history?monitorId=1&n=9007199254740992"],
+  ])("rejects %s with 400", async (_label, url) => {
+    const res = await authOwner.attach(request(app).get(url)).expect(400);
+    expect(res.body.error).toBeTruthy();
+  });
+});
+
 // ─── HTTP: GET /api/incidents ─────────────────────────────────────────────────
 
 describe("GET /api/incidents", () => {

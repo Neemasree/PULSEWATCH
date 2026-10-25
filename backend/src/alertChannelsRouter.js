@@ -27,16 +27,23 @@ router.post("/", requireAuth, csrfProtect, async (req, res) => {
   res.status(201).json({ channel });
 });
 router.post("/:id/test", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid channel ID" });
+  const idRaw = req.params.id;
+  if (!/^[0-9]+$/.test(idRaw) || !Number.isSafeInteger(Number(idRaw)) || Number(idRaw) < 1) {
+    return res.status(400).json({ error: "Channel ID must be a positive integer" });
+  }
+  const id = Number(idRaw);
   const result = await testChannel(id, req.user.sub, req.user.role === "admin");
   if (!result) return res.status(404).json({ error: "Alert channel not found" });
   res.json({ result });
 });
 router.patch("/:id", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const idRaw = req.params.id;
+  if (!/^[0-9]+$/.test(idRaw) || !Number.isSafeInteger(Number(idRaw)) || Number(idRaw) < 1) {
+    return res.status(400).json({ error: "Channel ID must be a positive integer" });
+  }
+  const id = Number(idRaw);
   const current = await getChannel(id, req.user.sub, req.user.role === "admin");
-  if (isNaN(id) || !current) return res.status(404).json({ error: "Alert channel not found" });
+  if (!current) return res.status(404).json({ error: "Alert channel not found" });
   const parsed = schema.partial().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
   if (parsed.data.target_url) {

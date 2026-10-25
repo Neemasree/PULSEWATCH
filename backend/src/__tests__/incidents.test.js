@@ -237,6 +237,7 @@ describe("GET /api/incidents", () => {
   test.each([
     ["missing monitor ID", "/api/incidents"],
     ["malformed monitor ID", "/api/incidents?monitorId=12oops"],
+    ["unsafe monitor ID", "/api/incidents?monitorId=9007199254740992"],
     ["zero limit", "/api/incidents?monitorId={monitorId}&limit=0"],
     ["negative limit", "/api/incidents?monitorId={monitorId}&limit=-1"],
     ["malformed limit", "/api/incidents?monitorId={monitorId}&limit=10oops"],
@@ -276,6 +277,16 @@ describe("POST /api/incidents/:id/acknowledge", () => {
     expect(res.body.incident.status).toBe("ACKNOWLEDGED");
     expect(res.body.incident.acknowledged_at).toBeTruthy();
   });
+
+  test.each(["12oops", "0", "-1", "9007199254740992"])(
+    "rejects invalid acknowledgement incident ID %s",
+    async (id) => {
+      const res = await authOwner
+        .attach(request(app).post(`/api/incidents/${id}/acknowledge`))
+        .expect(400);
+      expect(res.body.error).toMatch(/positive integer/i);
+    }
+  );
 
   test("other user cannot acknowledge owner's incident (returns 404)", async () => {
     // Create a fresh OPEN incident for this test

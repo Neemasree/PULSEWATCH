@@ -70,14 +70,22 @@ router.patch("/:id", requireAuth, csrfProtect, async (req, res) => {
   res.json({ channel: require("./db/alertChannels").safeChannel(result.rows[0]) });
 });
 router.get("/:id/deliveries", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id) || !await getChannel(id, req.user.sub, req.user.role === "admin")) return res.status(404).json({ error: "Alert channel not found" });
+  const idRaw = req.params.id;
+  if (!/^[0-9]+$/.test(idRaw) || !Number.isSafeInteger(Number(idRaw)) || Number(idRaw) < 1) {
+    return res.status(400).json({ error: "Channel ID must be a positive integer" });
+  }
+  const id = Number(idRaw);
+  if (!await getChannel(id, req.user.sub, req.user.role === "admin")) return res.status(404).json({ error: "Alert channel not found" });
   const raw = await client.lrange(`alert-deliveries:${id}`, 0, 49);
   res.json({ deliveries: raw.map((item) => JSON.parse(item)) });
 });
 router.delete("/:id", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id) || !await deleteChannel(id, req.user.sub, req.user.role === "admin")) return res.status(404).json({ error: "Alert channel not found" });
+  const idRaw = req.params.id;
+  if (!/^[0-9]+$/.test(idRaw) || !Number.isSafeInteger(Number(idRaw)) || Number(idRaw) < 1) {
+    return res.status(400).json({ error: "Channel ID must be a positive integer" });
+  }
+  const id = Number(idRaw);
+  if (!await deleteChannel(id, req.user.sub, req.user.role === "admin")) return res.status(404).json({ error: "Alert channel not found" });
   res.json({ message: "Alert channel deleted" });
 });
 module.exports = router;

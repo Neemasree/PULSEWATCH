@@ -66,6 +66,17 @@ describe("SSRF Protection", () => {
       expect(isPrivateIpv6("::ffff:192.168.1.1")).toBe(true);
       expect(isPrivateIpv6("::ffff:8.8.8.8")).toBe(false);
     });
+
+    test("detects hexadecimal IPv4-mapped private addresses", () => {
+      expect(isPrivateIpv6("::ffff:7f00:1")).toBe(true); // 127.0.0.1
+      expect(isPrivateIpv6("::ffff:a00:1")).toBe(true); // 10.0.0.1
+      expect(isPrivateIpv6("::ffff:a9fe:a9fe")).toBe(true); // 169.254.169.254
+      expect(isPrivateIpv6("::ffff:808:808")).toBe(false); // 8.8.8.8
+    });
+
+    test("blocks IPv6 multicast destinations", () => {
+      expect(isPrivateIpv6("ff02::1")).toBe(true);
+    });
   });
 
   describe("validateUrlSafety", () => {

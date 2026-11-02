@@ -4,6 +4,8 @@ const request = require("supertest");
 const jwt = require("jsonwebtoken");
 const { app } = require("../index");
 const { ACCESS_SECRET } = require("../auth");
+const pool = require("../db/pool");
+const { client: redisClient } = require("../redisClient");
 
 function authenticatedRequest() {
   const csrf = "csrf-alert-channel-validation";
@@ -19,6 +21,11 @@ function authenticatedRequest() {
     return req;
   };
 }
+
+afterAll(async () => {
+  await pool.end().catch(() => {});
+  redisClient.disconnect();
+});
 
 describe("alert channel route ID validation", () => {
   const send = authenticatedRequest();

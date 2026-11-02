@@ -48,7 +48,25 @@ function isPrivateIpv6(ip) {
     if (net.isIPv4(v4Part)) {
       return isPrivateIpv4(v4Part);
     }
+
+    // IPv4-mapped IPv6 also permits the final 32 bits in hexadecimal
+    // (for example ::ffff:7f00:1 is 127.0.0.1).
+    const mappedHex = v4Part.split(":");
+    if (mappedHex.length === 2 && mappedHex.every((part) => /^[0-9a-f]{1,4}$/.test(part))) {
+      const high = Number.parseInt(mappedHex[0], 16);
+      const low = Number.parseInt(mappedHex[1], 16);
+      const mappedIpv4 = [
+        (high >> 8) & 255,
+        high & 255,
+        (low >> 8) & 255,
+        low & 255,
+      ].join(".");
+      return isPrivateIpv4(mappedIpv4);
+    }
   }
+
+  // IPv6 multicast is not a valid public monitoring destination.
+  if (normalized.startsWith("ff")) return true;
   // Unique Local (fc00::/7 -> fc.. or fd..)
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) {
     return true;

@@ -20,7 +20,16 @@ export function AuthProvider({ children }) {
     // it does NOT trigger the refresh interceptor or cause a reload.
     api.me()
       .then(setUser)
-      .catch(() => setUser(null))
+      .catch(async () => {
+        // Access cookies expire before refresh cookies. Restore the session by
+        // rotating a still-valid refresh token instead of logging the user out.
+        try {
+          const { user: refreshedUser } = await api.refresh();
+          setUser(refreshedUser);
+        } catch {
+          setUser(null);
+        }
+      })
       .finally(() => setLoading(false));
   }, []);
 

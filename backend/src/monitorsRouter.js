@@ -186,7 +186,8 @@ router.get("/", requireAuth, async (req, res) => {
     const monitors = await getMonitors(req.user.sub, isAdmin);
     return res.json({ monitors });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[Monitors] Request failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -231,6 +232,10 @@ router.post("/", requireAuth, csrfProtect, async (req, res) => {
     return res.status(201).json({ monitor });
   } catch (err) {
     const status = err.status || 500;
+    if (status >= 500) {
+      console.error("[Monitors] Create failed:", err.message);
+      return res.status(500).json({ error: "Internal server error" });
+    }
     return res.status(status).json({ error: err.message });
   }
 });
@@ -251,7 +256,8 @@ router.get("/:id", requireAuth, async (req, res) => {
     }
     return res.json({ monitor });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[Monitors] Request failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -301,7 +307,8 @@ router.get("/:id/stats", requireAuth, async (req, res) => {
       percentilesBasedOn: "recent-500",
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[Monitors] Stats query failed:", err.message);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -316,7 +323,10 @@ router.get("/:id/export.csv", requireAuth, async (req, res) => {
     const csv = toCsv(["timestamp", "status", "httpStatus", "responseTimeMs", "failureReason"],
       results.map((result) => [result.timestamp, result.status, result.httpStatus, result.responseTime, result.failureReason]));
     res.type("text/csv").attachment(`monitor-${id}-checks.csv`).send(csv);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error("[Monitors] CSV export failed:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.get("/:id/report.csv", requireAuth, async (req, res) => {

@@ -42,6 +42,21 @@ const { getSslState } = require("./poller");
 
 const router = express.Router();
 
+const forbiddenRequestHeaders = new Set([
+  "host", "content-length", "transfer-encoding", "connection",
+  "proxy-connection", "proxy-authorization", "upgrade", "expect", "trailer",
+]);
+const requestHeadersSchema = z.record(z.string(), z.string()).refine((headers) => {
+  const entries = Object.entries(headers);
+  return entries.length <= 50 && entries.every(([name, value]) => (
+    name.length <= 100 &&
+    /^[A-Za-z0-9!#$%&'*+.^_|~-]+$/.test(name) &&
+    !forbiddenRequestHeaders.has(name.toLowerCase()) &&
+    value.length <= 8192 &&
+    !/[\r\n]/.test(value)
+  ));
+}, "Headers must contain at most 50 valid entries and cannot override transport headers");
+
 // ─── Input Validation Schemas ────────────────────────────────────────────────
 
 const createMonitorSchema = z
@@ -61,7 +76,7 @@ const createMonitorSchema = z
     is_public: z.boolean().optional(),
     isPublic: z.boolean().optional(),
     method: z.enum(["GET", "HEAD", "POST"]).optional(),
-    request_headers: z.record(z.string(), z.string()).nullable().optional(),
+    request_headers: requestHeadersSchema.nullable().optional(),
     requestHeaders: z.record(z.string(), z.string()).nullable().optional(),
     request_body: z.string().max(1024 * 1024).nullable().optional(),
     requestBody: z.string().max(1024 * 1024).nullable().optional(),

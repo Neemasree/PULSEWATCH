@@ -25,11 +25,6 @@ Adaptive polling · Z-score anomaly detection · Incident lifecycle · SSL & mai
 
 <br/>
 
-<!-- Replace with your own screenshot: save it as docs/screenshots/dashboard.png -->
-<p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="PulseWatch dashboard" width="90%"/>
-</p>
-
 ---
 
 ## 📊 Results
@@ -38,7 +33,7 @@ Adaptive polling · Z-score anomaly detection · Incident lifecycle · SSL & mai
 |---|---|
 | **Check volume reduction** (adaptive vs fixed 10s polling) | **82%**: 188 adaptive checks vs 1,031 for the fixed baseline |
 | Automated tests | Backend Jest tests and browser end-to-end workflows run in GitHub Actions against PostgreSQL and Redis |
-| Anomaly detector coverage | **100%** statements, branches, functions and lines |
+| Anomaly detector | Dedicated tests for insufficient data, stable baselines, spikes, flat baselines and z-score boundaries |
 
 > Measured in a local run with 6 healthy monitors. The baseline is a hypothetical fixed 10-second poll, and the figure reflects steady state with healthy monitors; failing or anomalous monitors poll faster, which lowers the saving.
 
@@ -374,13 +369,13 @@ OpenAPI docs are served at `/api/docs` (open in development, admin-only in produ
 
 ```bash
 cd backend
-npm test                 # 9 suites, 119 tests
-npm test -- --coverage   # coverage report
+npm test                 # unit + integration tests
+npm test -- --coverage   # local coverage report
 ```
 
-Suites cover monitor CRUD and validation, incident transitions, ownership scoping, SSRF protection, auth hardening, Redis-backed auth state, the polling pipeline and anomaly detection.
+The backend tests cover monitor CRUD and validation, ownership scoping, incident lifecycle and recovery, Redis-backed authentication, concurrent refresh replay, alert delivery, SSRF/IPv6 protections, polling behavior, request limits and anomaly detection.
 
-GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request: it starts PostgreSQL 16 and Redis 7 service containers, applies migrations, runs the backend tests, and builds the frontend.
+GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request. It starts PostgreSQL 16 and Redis 7 service containers, applies migrations, runs the backend Jest suite, builds the frontend, and exercises browser workflows with Playwright.
 
 ---
 

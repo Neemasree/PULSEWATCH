@@ -102,17 +102,27 @@ function notifyMonitorRemoved(monitor) {
  * Passes both objects so the poller can decide whether to reset adaptive state.
  */
 function notifyMonitorUpdated(prevMonitor, newMonitor) {
-  if (prevMonitor) {
-    // Remove old entry from cache and stop its loop
-    _monitors.delete(prevMonitor.id);
-    registry.emit("removed", prevMonitor);
-  }
-  if (newMonitor) {
-    _monitors.set(newMonitor.id, newMonitor);
-    if (newMonitor.enabled) {
-      // Pass prev so poller can decide whether to reset adaptive state
-      registry.emit("added", newMonitor, prevMonitor);
+  if (!newMonitor) {
+    if (prevMonitor) {
+      _monitors.delete(prevMonitor.id);
+      registry.emit("removed", prevMonitor);
     }
+    return;
+  }
+
+  _monitors.set(newMonitor.id, newMonitor);
+
+  const wasEnabled = Boolean(prevMonitor?.enabled);
+  const isEnabled = Boolean(newMonitor.enabled);
+
+  if (wasEnabled && isEnabled) {
+    // Keep the poller state alive for edits; the poller replaces its state
+    // object so an in-flight check using the old configuration is discarded.
+    registry.emit("updated", newMonitor, prevMonitor);
+  } else if (wasEnabled && !isEnabled) {
+    registry.emit("removed", prevMonitor);
+  } else if (!wasEnabled && isEnabled) {
+    registry.emit("added", newMonitor, prevMonitor);
   }
 }
 

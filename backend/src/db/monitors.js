@@ -214,6 +214,12 @@ async function resumeMonitor(id, userId, isAdmin = false) {
   return updateMonitor(id, userId, isAdmin, { enabled: true });
 }
 
+/** Retrieves all monitors, including paused ones, for ownership/cache state. */
+async function getAllMonitors() {
+  const { rows } = await pool.query("SELECT * FROM monitors ORDER BY id ASC");
+  return rows;
+}
+
 /**
  * Retrieves all currently enabled monitors across all users (for poller startup).
  */
@@ -243,6 +249,7 @@ module.exports = {
   pauseMonitor,
   resumeMonitor,
   getAllEnabledMonitors,
+  getAllMonitors,
   getPublicEnabledMonitors,
   getMaxMonitorsPerUser,
 };

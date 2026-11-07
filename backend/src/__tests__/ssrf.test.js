@@ -3,7 +3,8 @@
  * Unit tests for the SSRF validation engine.
  */
 
-const { isPrivateIp, isPrivateIpv4, isPrivateIpv6, validateUrlSafety } = require("../ssrf");
+const dns = require("dns");
+const { isPrivateIp, isPrivateIpv4, isPrivateIpv6, validateUrlSafety, safeLookup } = require("../ssrf");
 
 describe("SSRF Protection", () => {
   describe("isPrivateIpv4", () => {
@@ -119,10 +120,35 @@ describe("SSRF Protection", () => {
       );
     });
 
+    test("fails closed when DNS returns an empty address list", async () => {
+      const lookup = jest.spyOn(dns.promises, "lookup").mockResolvedValue([]);
+      try {
+        await expect(validateUrlSafety("https://empty-dns.example")).rejects.toThrow(
+          /Hostname could not be resolved/
+        );
+      } finally {
+        lookup.mockRestore();
+      }
+    });
+
     test("accepts valid public URLs", async () => {
       const parsed = await validateUrlSafety("https://www.google.com");
       expect(parsed.hostname).toBe("www.google.com");
       expect(parsed.protocol).toBe("https:");
+    });
+  });
+
+  describe("safeLookup", () => {
+    test("rejects an empty DNS result instead of dereferencing an absent address", (done) => {
+      const lookup = jest.spyOn(dns, "lookup").mockImplementation((_hostname, _options, callback) => {
+        callback(null, []);
+      });
+      safeLookup("empty-dns.example", {}, (error) => {
+        expect(error).toBeTruthy();
+        expect(error.code).toBe("ERR_DNS_EMPTY_RESULT");
+        lookup.mockRestore();
+        done();
+      });
     });
   });
 });

@@ -33,33 +33,51 @@ async function createMonitor({
   checkSsl = true,
 }) {
   const maxLimit = getMaxMonitorsPerUser();
+  const db = await pool.connect();
 
-  // Check per-user monitor count
-  const countResult = await pool.query(
-    "SELECT COUNT(*)::int AS count FROM monitors WHERE user_id = $1",
-    [userId]
-  );
-  const currentCount = countResult.rows[0]?.count || 0;
+  try {
+    await db.query("BEGIN");
 
-  if (currentCount >= maxLimit) {
-    const error = new Error(`Monitor limit reached (${maxLimit} max per user)`);
-    error.status = 400;
+    // Serialize monitor creation per user so concurrent requests cannot race
+    // past the per-user quota check. The transaction-scoped lock is released
+    // automatically on COMMIT or ROLLBACK.
+    await db.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+      ["pulsewatch:monitor-limit", String(userId)]
+    );
+
+    const countResult = await db.query(
+      "SELECT COUNT(*)::int AS count FROM monitors WHERE user_id = $1",
+      [userId]
+    );
+    const currentCount = countResult.rows[0]?.count || 0;
+
+    if (currentCount >= maxLimit) {
+      const error = new Error(`Monitor limit reached (${maxLimit} max per user)`);
+      error.status = 400;
+      throw error;
+    }
+
+    const { rows } = await db.query(
+      `INSERT INTO monitors (
+         user_id, name, url, interval_seconds, expected_status, enabled, is_public,
+         method, request_headers, request_body, keyword, keyword_mode, timeout_ms,
+         failure_threshold, check_ssl, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
+       RETURNING *`,
+      [userId, name, url, intervalSeconds, expectedStatus, isPublic, method,
+        requestHeaders, requestBody, keyword, keywordMode, timeoutMs, failureThreshold, checkSsl]
+    );
+
+    await db.query("COMMIT");
+    return rows[0];
+  } catch (error) {
+    await db.query("ROLLBACK").catch(() => {});
     throw error;
+  } finally {
+    db.release();
   }
-
-  const { rows } = await pool.query(
-    `INSERT INTO monitors (
-       user_id, name, url, interval_seconds, expected_status, enabled, is_public,
-       method, request_headers, request_body, keyword, keyword_mode, timeout_ms,
-       failure_threshold, check_ssl, created_at, updated_at
-     )
-     VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
-     RETURNING *`,
-    [userId, name, url, intervalSeconds, expectedStatus, isPublic, method,
-      requestHeaders, requestBody, keyword, keywordMode, timeoutMs, failureThreshold, checkSsl]
-  );
-
-  return rows[0];
 }
 
 /**

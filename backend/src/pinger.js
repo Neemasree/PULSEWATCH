@@ -30,6 +30,10 @@ async function pingUrl(url, options = {}) {
       data: options.body || undefined,
       timeout: options.timeoutMs || 5000,
       maxRedirects: 3,
+      // Bound both request and response bodies for every check, not only
+      // keyword checks, so a monitored endpoint cannot exhaust backend memory.
+      maxContentLength: 1024 * 1024,
+      maxBodyLength: 1024 * 1024,
       httpAgent: new http.Agent({ lookup: safeLookup }),
       httpsAgent: new https.Agent({ lookup: safeLookup }),
       // Don't throw on 4xx/5xx so we can report them as "down" with detail
@@ -37,8 +41,6 @@ async function pingUrl(url, options = {}) {
     };
     if (options.keyword) {
       requestOptions.responseType = "text";
-      requestOptions.maxContentLength = 1024 * 1024;
-      requestOptions.maxBodyLength = 1024 * 1024;
     }
     const response = await axios.request({ url, ...requestOptions });
 
@@ -69,7 +71,8 @@ async function pingUrl(url, options = {}) {
       error: err.code || err.message,
       failureReason: err.code === "ETIMEDOUT" || err.code === "ECONNABORTED"
         ? "timeout"
-        : err.code === "ENOTFOUND" ? "dns" : "connection",
+        : err.code === "ENOTFOUND" ? "dns"
+        : err.code === "ERR_BAD_RESPONSE" ? "response_too_large" : "connection",
     };
   }
 }

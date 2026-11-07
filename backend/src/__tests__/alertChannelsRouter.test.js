@@ -42,6 +42,9 @@ describe("alert channel route ID validation", () => {
     ["GET", "/api/alert-channels/9007199254740992/deliveries", "get"],
     ["DELETE", "/api/alert-channels/12oops", "delete"],
     ["DELETE", "/api/alert-channels/-1", "delete"],
+    ["GET", "/api/monitors/12oops/maintenance", "get"],
+    ["POST", "/api/monitors/12oops/maintenance", "post"],
+    ["DELETE", "/api/maintenance/12oops", "delete"],
   ])("%s %s rejects malformed IDs before database access", async (_method, path, method) => {
     const response = await send(method, path);
     expect(response.status).toBe(400);

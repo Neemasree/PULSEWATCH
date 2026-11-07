@@ -228,6 +228,44 @@ describe("Monitors API (/api/monitors)", () => {
     });
   });
 
+  describe("Custom request header validation", () => {
+    test.each([
+      ["host override", { Host: "127.0.0.1" }],
+      ["content length override", { "Content-Length": "0" }],
+      ["hop-by-hop connection header", { Connection: "keep-alive" }],
+      ["proxy authorization", { "Proxy-Authorization": "Basic dGVzdA==" }],
+      ["header injection", { "X-Test": "safe\\r\\nX-Injected: yes" }],
+      ["oversized value", { "X-Test": "x".repeat(8193) }],
+    ])("rejects %s before storing a monitor", async (_label, headers) => {
+      const response = await authA
+        .attach(request(app).post("/api/monitors"))
+        .send({
+          name: "Invalid Request Headers",
+          url: "https://example.com",
+          request_headers: headers,
+        })
+        .expect(400);
+
+      expect(response.body.error).toMatch(/headers/i);
+    });
+
+    test("rejects more than 50 custom headers", async () => {
+      const headers = Object.fromEntries(
+        Array.from({ length: 51 }, (_, index) => [`X-Custom-${index}`, "value"])
+      );
+      const response = await authA
+        .attach(request(app).post("/api/monitors"))
+        .send({
+          name: "Too Many Request Headers",
+          url: "https://example.com",
+          request_headers: headers,
+        })
+        .expect(400);
+
+      expect(response.body.error).toMatch(/headers/i);
+    });
+  });
+
   describe("SSRF Rejection", () => {
     test("rejects localhost", async () => {
       const res = await authA

@@ -34,7 +34,8 @@ const pool = new Pool({
   ssl: getDatabaseSslConfig(
     process.env.DATABASE_URL,
     process.env.DATABASE_SSL,
-    process.env.DATABASE_SSL_REJECT_UNAUTHORIZED
+    process.env.DATABASE_SSL_REJECT_UNAUTHORIZED,
+    process.env.PGHOST
   ),
 });
 

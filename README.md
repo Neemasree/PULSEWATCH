@@ -328,7 +328,8 @@ cd frontend && npm install && npm run dev
 | `PORT` | Backend port (default 3000) |
 | `NODE_ENV` | `development` or `production` |
 | `DATABASE_URL` | PostgreSQL connection string |
-| `DATABASE_SSL` | Set to `false` for local Postgres without SSL |
+| `DATABASE_SSL` | Set to `false` to disable TLS (normally only for local Postgres) |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Defaults to `true` for hosted Postgres; set to `false` only when a provider requires a custom/self-signed CA |
 | `REDIS_URL` or `REDIS_HOST` / `REDIS_PORT` | Redis connection |
 | `ALLOWED_ORIGIN` | Frontend origin(s) for CORS, comma-separated |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | Required in production, use different values |

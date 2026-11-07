@@ -1,5 +1,12 @@
 const poller = require("../poller");
 const registry = require("../endpointRegistry");
+const { client: redisClient } = require("../redisClient");
+const pool = require("../db/pool");
+
+afterAll(async () => {
+  redisClient.disconnect();
+  await pool.end().catch(() => {});
+});
 
 describe("polling statistics privacy", () => {
   afterEach(() => {

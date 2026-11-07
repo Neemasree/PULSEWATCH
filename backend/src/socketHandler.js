@@ -19,10 +19,19 @@ let _io = null;
 
 function parseCookies(cookieHeader = "") {
   return Object.fromEntries(
-    cookieHeader.split(";").map((c) => {
-      const [k, ...v] = c.trim().split("=");
-      return [k.trim(), decodeURIComponent(v.join("="))];
-    }).filter(([k]) => k)
+    cookieHeader.split(";").map((cookie) => {
+      const [key, ...parts] = cookie.trim().split("=");
+      if (!key) return ["", ""];
+      const rawValue = parts.join("=");
+      let value = rawValue;
+      try {
+        value = decodeURIComponent(rawValue);
+      } catch {
+        // A malformed cookie must not throw from the Socket.IO handshake.
+        value = "";
+      }
+      return [key.trim(), value];
+    }).filter(([key]) => key)
   );
 }
 
@@ -122,4 +131,4 @@ function broadcastIncidentUpdate(event) {
   _io.to("admin").emit("incident-update", event);
 }
 
-module.exports = { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate, userRoom };
+module.exports = { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate, userRoom, parseCookies };

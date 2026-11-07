@@ -187,7 +187,7 @@ app.post("/api/auth/register", registerLimiter, async (req, res) => {
  * No CSRF check here — this route only reads a cookie, produces another cookie,
  * and returns no data that could be used in a CSRF attack.
  */
-app.post("/api/auth/refresh", async (req, res) => {
+app.post("/api/auth/refresh", csrfProtect, async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
   if (!refreshToken) return res.status(401).json({ error: "No refresh token" });
 
@@ -207,7 +207,7 @@ app.post("/api/auth/refresh", async (req, res) => {
  * Without server-side blacklisting, clearing the cookie still leaves a valid
  * 7-day token that a stolen cookie could replay.
  */
-app.post("/api/auth/logout", async (req, res) => {
+app.post("/api/auth/logout", csrfProtect, async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
   try {
     if (refreshToken) await revokeRefreshToken(refreshToken);

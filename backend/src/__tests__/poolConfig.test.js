@@ -29,6 +29,15 @@ describe("PostgreSQL TLS configuration", () => {
     )).toBe(false);
   });
 
+  test("verifies remote PGHOST connections when DATABASE_URL is absent", () => {
+    expect(getDatabaseSslConfig(undefined, undefined, undefined, "db.example.com"))
+      .toEqual({ rejectUnauthorized: true });
+  });
+
+  test("does not force TLS for local PGHOST connections", () => {
+    expect(getDatabaseSslConfig(undefined, undefined, undefined, "localhost")).toBe(false);
+  });
+
   test("does not mistake domains containing localhost as local hosts", () => {
     expect(getDatabaseSslConfig("postgres://user:pass@notlocalhost.example.com/app"))
       .toEqual({ rejectUnauthorized: true });

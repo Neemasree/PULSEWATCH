@@ -4,7 +4,7 @@ function getDatabaseSslConfig(databaseUrl, databaseSsl, rejectUnauthorizedOverri
 
   let hostname;
   try {
-    hostname = new URL(databaseUrl).hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+    hostname = new URL(databaseUrl).hostname.toLowerCase();
   } catch {
     // Let pg handle malformed connection strings; do not silently disable TLS.
     return { rejectUnauthorized: rejectUnauthorizedOverride !== "false" };
@@ -12,7 +12,8 @@ function getDatabaseSslConfig(databaseUrl, databaseSsl, rejectUnauthorizedOverri
 
   const isLocalDatabase = hostname === "localhost" ||
     hostname === "127.0.0.1" ||
-    hostname === "::1";
+    hostname === "::1" ||
+    hostname === "[::1]";
   if (isLocalDatabase) return false;
 
   return {

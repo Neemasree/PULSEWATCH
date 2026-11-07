@@ -1,4 +1,11 @@
 const { parseCookies } = require("../socketHandler");
+const { client: redisClient } = require("../redisClient");
+const pool = require("../db/pool");
+
+afterAll(async () => {
+  redisClient.disconnect();
+  await pool.end().catch(() => {});
+});
 
 describe("Socket.IO cookie parsing", () => {
   test("decodes values containing encoded separators", () => {

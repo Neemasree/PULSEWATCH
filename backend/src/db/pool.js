@@ -18,6 +18,7 @@
  */
 
 const { Pool } = require("pg");
+const { getDatabaseSslConfig } = require("./poolConfig");
 
 // pg reads DATABASE_URL automatically if set; individual PG* vars otherwise.
 // max:10 is the pg default but stated explicitly for clarity.
@@ -28,14 +29,13 @@ const pool = new Pool({
   max:                    10,
   idleTimeoutMillis:  30_000,
   connectionTimeoutMillis: 5_000,
-  // Only use SSL for hosted providers (non-localhost).
-  // Local Postgres doesn't have SSL enabled by default.
-  ssl: process.env.DATABASE_SSL === "false"
-    ? false
-    : process.env.DATABASE_URL
-      && !/(localhost|127\.0\.0\.1)(?::|\/|$)/i.test(process.env.DATABASE_URL)
-    ? { rejectUnauthorized: false }
-    : false,
+  // Hosted Postgres uses TLS with certificate verification by default.
+  // Explicitly opt out only when a provider requires a custom/self-signed CA.
+  ssl: getDatabaseSslConfig(
+    process.env.DATABASE_URL,
+    process.env.DATABASE_SSL,
+    process.env.DATABASE_SSL_REJECT_UNAUTHORIZED
+  ),
 });
 
 pool.on("connect", () => console.log("[DB] Postgres connected"));

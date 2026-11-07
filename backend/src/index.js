@@ -362,9 +362,11 @@ app.get("/api/monitors/:id/maintenance", requireAuth, async (req, res) => {
 
 app.post("/api/monitors/:id/maintenance", requireAuth, csrfProtect, async (req, res) => {
   const id = parsePositiveId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid monitor ID" });
+
   const startsAt = new Date(req.body?.starts_at);
   const endsAt = new Date(req.body?.ends_at);
-  if (id === null || isNaN(startsAt.getTime()) || isNaN(endsAt.getTime()) || endsAt <= startsAt) {
+  if (isNaN(startsAt.getTime()) || isNaN(endsAt.getTime()) || endsAt <= startsAt) {
     return res.status(400).json({ error: "Valid starts_at and ends_at with ends_at after starts_at are required" });
   }
   try {

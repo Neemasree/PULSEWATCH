@@ -509,7 +509,8 @@ app.post("/api/incidents/:id/acknowledge", requireAuth, csrfProtect, async (req,
     });
     return res.json({ incident });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[API] Request failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 

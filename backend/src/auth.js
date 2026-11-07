@@ -280,24 +280,33 @@ function signRefreshToken(user) {
  * @returns {Promise<{ accessToken, refreshToken, refreshJti, user }>}
  */
 async function login(username, password) {
-  // Lockout check — now querying Redis TTL
-  const lockMsg = await checkLockout(username);
-  if (lockMsg) throw new Error(lockMsg);
+  const cleanUsername = typeof username === "string" ? username.trim() : "";
+  const validUsername = /^[a-zA-Z0-9_]{3,20}$/.test(cleanUsername);
+  const validPassword = typeof password === "string" &&
+    Buffer.byteLength(password, "utf8") > 0 &&
+    Buffer.byteLength(password, "utf8") <= 72;
 
-  const user = await findByUsername(username);
-
-  // Always run bcrypt compare (even on dummy hash) to prevent timing oracle
-  const hash  = user ? user.password_hash : DUMMY_HASH;
-  const valid = await bcrypt.compare(password, hash);
-
-  if (!user || !valid) {
-    if (user) await recordFailure(username);
+  // Do not reveal whether an account is locked. The same bcrypt work and
+  // generic response are used for locked, missing and invalid credentials.
+  const lockMsg = validUsername ? await checkLockout(cleanUsername) : null;
+  if (lockMsg) {
+    await bcrypt.compare("__invalid_login__", DUMMY_HASH);
     throw new Error("Invalid credentials");
   }
 
-  await clearFailures(username);
+  const user = validUsername ? await findByUsername(cleanUsername) : null;
+  const hash = user && validPassword ? user.password_hash : DUMMY_HASH;
+  const candidate = validPassword ? password : "__invalid_login__";
+  const valid = await bcrypt.compare(candidate, hash);
 
-  const accessToken                              = signAccessToken(user);
+  if (!user || !valid || !validPassword) {
+    if (user) await recordFailure(cleanUsername);
+    throw new Error("Invalid credentials");
+  }
+
+  await clearFailures(cleanUsername);
+
+  const accessToken = signAccessToken(user);
   const { token: refreshToken, jti: refreshJti } = signRefreshToken(user);
 
   return {
@@ -317,22 +326,31 @@ async function login(username, password) {
  * @returns {Promise<{ accessToken, refreshToken, refreshJti, user }>}
  */
 async function register(username, password, name) {
-  if (!username || !password || !name) {
+  if (typeof username !== "string" || typeof password !== "string" || typeof name !== "string") {
+    throw new Error("Username, password and name must be strings");
+  }
+
+  const cleanUsername = username.trim();
+  const cleanName = name.trim();
+  if (!cleanUsername || !password || !cleanName) {
     throw new Error("Username, password and name are required");
   }
-  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(cleanUsername)) {
     throw new Error("Username must be 3–20 characters (letters, numbers, underscore only)");
   }
   if (password.length < 8) {
     throw new Error("Password must be at least 8 characters");
   }
+  if (Buffer.byteLength(password, "utf8") > 72) {
+    throw new Error("Password must be at most 72 UTF-8 bytes");
+  }
   if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
     throw new Error("Password must contain at least one letter and one number");
   }
-  if (name.trim().length < 2 || name.trim().length > 40) {
+  if (cleanName.length < 2 || cleanName.length > 40) {
     throw new Error("Name must be 2–40 characters");
   }
-  if (username.toLowerCase() === "admin") {
+  if (cleanUsername.toLowerCase() === "admin") {
     throw new Error("Unable to register with those details");
   }
 
@@ -340,7 +358,7 @@ async function register(username, password, name) {
 
   let newUser;
   try {
-    newUser = await createUser(username, passwordHash, "guest", name.trim());
+    newUser = await createUser(cleanUsername, passwordHash, "guest", cleanName);
   } catch (err) {
     // Postgres unique constraint violation code = 23505
     if (err.code === "23505") {

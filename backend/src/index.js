@@ -236,8 +236,8 @@ app.get("/api/public/status", async (_req, res) => {
     const H24 = 24 * 60 * 60 * 1000;
     const D7 = 7 * H24;
     const D90 = 90 * 24 * H24;
-    const startDay = Math.floor((now - D90) / (24 * H24));
     const currentDay = Math.floor(now / (24 * H24));
+    const startDay = currentDay - 89; // exactly 90 daily buckets
 
     const services = await Promise.all(
       getPublicMonitors().map(async (monitor) => {

@@ -21,7 +21,7 @@
 
 const { pingUrl }        = require("./pinger");
 const { storeMetric, acquireCooldown } = require("./redisClient");
-const { openIncident, resolveIncident } = require("./db/incidents");
+const { openIncident, getOpenIncidentForMonitor, resolveIncident } = require("./db/incidents");
 const { detectAnomaly }  = require("./anomalyDetector");
 const { sendSlackAlert } = require("./alerts");
 const { upsertCheckRollup, deleteOldRollups } = require("./db/rollups");
@@ -97,6 +97,7 @@ function makeState(monitor, preserveDownSince = null) {
     lastStatus:        null,
     downSince:         preserveDownSince,
     openIncidentId:    null,
+    incidentHydrated: false,
     consecutiveFailures: 0,
     failureThreshold: monitor.failure_threshold ?? 2,
     sslExpiresAt: null,
@@ -117,6 +118,20 @@ async function performMonitorCheck(monitorId) {
   if (!monitor) {
     monitorState.delete(monitorId);
     return;
+  }
+
+  // Rehydrate any active incident before the first check. Without this,
+  // a restart followed by a healthy response could leave an OPEN incident
+  // stranded forever because the in-memory incident ID was lost.
+  if (!state.incidentHydrated) {
+    const activeIncident = await getOpenIncidentForMonitor(monitorId);
+    state.incidentHydrated = true;
+    if (activeIncident) {
+      state.openIncidentId = activeIncident.id;
+      state.downSince = new Date(activeIncident.started_at).getTime();
+      state.lastStatus = "down";
+      state.consecutiveFailures = state.failureThreshold;
+    }
   }
 
   const raw = await pingUrl(monitor.url, {
@@ -182,25 +197,28 @@ async function performMonitorCheck(monitorId) {
     if (!wasDown) {
       state.downSince = new Date(result.timestamp).getTime();
       console.log(`[Incident] Outage started: monitor ${monitorId} (${monitor.url})`);
-      // Only open a new PG incident if we don't already have one in memory.
-      // openIncident() also handles the restart case: if a duplicate OPEN row
-      // already exists (unique index violation), it recovers the existing row.
-      if (!state.openIncidentId) {
-        openIncident({ monitorId, startedAt: state.downSince })
-          .then((row) => {
-            if (row) {
-              state.openIncidentId = row.id;
-              getBroadcastIncidentUpdate()({
-                type:       "opened",
-                monitorId,
-                incidentId: row.id,
-                startedAt:  state.downSince,
-              });
-            }
-          })
-          .catch((err) => console.error(`[Incident] openIncident failed: ${err.message}`));
+    }
+
+    // Retry incident creation on subsequent confirmed-down checks if the
+    // database was temporarily unavailable during the first outage check.
+    if (!state.openIncidentId && state.downSince !== null) {
+      try {
+        const row = await openIncident({ monitorId, startedAt: state.downSince });
+        if (row) {
+          state.openIncidentId = row.id;
+          state.downSince = new Date(row.started_at).getTime();
+          getBroadcastIncidentUpdate()({
+            type: "opened",
+            monitorId,
+            incidentId: row.id,
+            startedAt: state.downSince,
+          });
+        }
+      } catch (err) {
+        console.error(`[Incident] openIncident failed: ${err.message}`);
       }
     }
+
     // Persist cooldowns in Redis so separate backend processes do not
     // independently send the same outage alert.
     const cooldownKey = `pulsewatch:cooldown:down:${monitorId}`;
@@ -219,33 +237,47 @@ async function performMonitorCheck(monitorId) {
       });
   }
 
-  if (isUp && state.openIncidentId !== null && state.downSince !== null) {
-    const resolvedAt  = new Date(result.timestamp).getTime();
-    const durationSec = ((resolvedAt - state.downSince) / 1000).toFixed(0);
-    if (state.openIncidentId) {
-      resolveIncident({ incidentId: state.openIncidentId, resolvedAt })
-        .then((row) => {
-          if (row) {
-            getBroadcastIncidentUpdate()({
-              type:       "resolved",
-              monitorId,
-              incidentId: row.id,
-              resolvedAt: new Date(row.resolved_at).getTime(),
-              durationMs: row.duration_ms,
-            });
-          }
-        })
-        .catch((err) => console.error(`[Incident] resolveIncident failed: ${err.message}`));
-      console.log(`[Incident] Resolved: monitor ${monitorId} — ${durationSec}s`);
-      notify(monitor, "recovered", { ...result, downtimeMs: resolvedAt - state.downSince });
-    } else {
-      console.warn(`[Incident] Resolved but no openIncidentId for monitor ${monitorId} — skipping DB update`);
+  // If incident persistence failed while the outage was active, create the
+  // record before resolving it so the lifecycle is not silently lost.
+  if (isUp && state.openIncidentId === null && state.downSince !== null) {
+    try {
+      const row = await openIncident({ monitorId, startedAt: state.downSince });
+      if (row) state.openIncidentId = row.id;
+    } catch (err) {
+      console.error(`[Incident] recovery-time incident creation failed: ${err.message}`);
     }
-    state.downSince     = null;
-    state.openIncidentId = null;
   }
 
-  if (isUp || confirmedDown) state.lastStatus = result.status;
+  if (isUp && state.openIncidentId !== null && state.downSince !== null) {
+    const resolvedAt = new Date(result.timestamp).getTime();
+    const startedAt = state.downSince;
+    try {
+      const row = await resolveIncident({ incidentId: state.openIncidentId, resolvedAt });
+      if (row) {
+        getBroadcastIncidentUpdate()({
+          type: "resolved",
+          monitorId,
+          incidentId: row.id,
+          resolvedAt: new Date(row.resolved_at).getTime(),
+          durationMs: row.duration_ms,
+        });
+      }
+      const durationSec = ((resolvedAt - startedAt) / 1000).toFixed(0);
+      console.log(`[Incident] Resolved: monitor ${monitorId} — ${durationSec}s`);
+      notify(monitor, "recovered", { ...result, downtimeMs: resolvedAt - startedAt });
+      state.downSince = null;
+      state.openIncidentId = null;
+    } catch (err) {
+      // Keep the incident state so the next healthy check retries resolution.
+      console.error(`[Incident] resolveIncident failed: ${err.message}`);
+    }
+  }
+
+  if (isUp && state.openIncidentId !== null && state.downSince !== null) {
+    state.lastStatus = "down"; // DB resolution failed; retry on the next healthy check.
+  } else if (isUp || confirmedDown) {
+    state.lastStatus = result.status;
+  }
 
   if (_onResultCb) _onResultCb(result, anomaly);
 

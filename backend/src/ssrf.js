@@ -42,50 +42,71 @@ function isPrivateIpv4(ip) {
   return false;
 }
 
+function ipv6ToBigInt(ip) {
+  let address = String(ip).toLowerCase().split("%")[0];
+  if (address.includes(".")) {
+    const splitAt = address.lastIndexOf(":");
+    const ipv4 = address.slice(splitAt + 1);
+    if (!net.isIPv4(ipv4)) return null;
+    const octets = ipv4.split(".").map(Number);
+    const high = ((octets[0] << 8) | octets[1]).toString(16);
+    const low = ((octets[2] << 8) | octets[3]).toString(16);
+    address = `${address.slice(0, splitAt)}:${high}:${low}`;
+  }
+
+  const halves = address.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return null;
+  const groups = halves.length === 2
+    ? [...left, ...Array(missing).fill("0"), ...right]
+    : left;
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  return groups.reduce((value, group) => (value << 16n) | BigInt(`0x${group}`), 0n);
+}
+
+function ipv6HasPrefix(address, prefix, bits) {
+  return (address >> BigInt(128 - bits)) === BigInt(prefix);
+}
+
 function isPrivateIpv6(ip) {
-  const normalized = ip.toLowerCase();
-  // Loopback / unspecified
-  if (normalized === "::1" || normalized === "::" || normalized === "0:0:0:0:0:0:0:1") {
-    return true;
-  }
-  // IPv4-mapped IPv6 (::ffff:127.0.0.1 or ::ffff:7f00:1)
-  if (normalized.startsWith("::ffff:")) {
-    const v4Part = normalized.slice(7);
-    if (net.isIPv4(v4Part)) {
-      return isPrivateIpv4(v4Part);
-    }
+  const address = ipv6ToBigInt(ip);
+  // Invalid addresses are unsafe. Only globally-routable unicast IPv6 is
+  // accepted below; this also blocks reserved and transition address space.
+  if (address === null) return true;
 
-    // IPv4-mapped IPv6 also permits the final 32 bits in hexadecimal
-    // (for example ::ffff:7f00:1 is 127.0.0.1).
-    const mappedHex = v4Part.split(":");
-    if (mappedHex.length === 2 && mappedHex.every((part) => /^[0-9a-f]{1,4}$/.test(part))) {
-      const high = Number.parseInt(mappedHex[0], 16);
-      const low = Number.parseInt(mappedHex[1], 16);
-      const mappedIpv4 = [
-        (high >> 8) & 255,
-        high & 255,
-        (low >> 8) & 255,
-        low & 255,
-      ].join(".");
-      return isPrivateIpv4(mappedIpv4);
-    }
+  if (address === 0n || address === 1n) return true; // unspecified / loopback
+
+  // IPv4-mapped IPv6 (::ffff:0:0/96), including fully expanded notation.
+  if ((address >> 32n) === 0xffffn) {
+    const v4 = Number(address & 0xffffffffn);
+    const mapped = [
+      (v4 >>> 24) & 255,
+      (v4 >>> 16) & 255,
+      (v4 >>> 8) & 255,
+      v4 & 255,
+    ].join(".");
+    return isPrivateIpv4(mapped);
   }
 
-  // IPv6 multicast is not a valid public monitoring destination.
-  if (normalized.startsWith("ff")) return true;
-  // Unique Local (fc00::/7 -> fc.. or fd..)
-  if (normalized.startsWith("fc") || normalized.startsWith("fd")) {
-    return true;
-  }
-  // Link-local (fe80::/10)
-  if (
-    normalized.startsWith("fe80:") ||
-    normalized.startsWith("fe9") ||
-    normalized.startsWith("fea") ||
-    normalized.startsWith("feb")
-  ) {
-    return true;
-  }
+  // Deprecated IPv4-compatible form and other ::/96 special addresses.
+  if ((address >> 32n) === 0n) return true;
+  if (ipv6HasPrefix(address, 0xff, 8)) return true; // multicast
+  if (ipv6HasPrefix(address, 0xfc, 7)) return true; // unique-local
+  if (ipv6HasPrefix(address, 0x3fa, 10)) return true; // link-local fe80::/10
+
+  // Global unicast allocation is 2000::/3. Reject all other address classes,
+  // including NAT64, discard-only, site-local and reserved ranges.
+  if (!ipv6HasPrefix(address, 0x2000, 3)) return true;
+
+  // Special-purpose ranges inside global-unicast space, including IETF
+  // protocol assignments, documentation, benchmarking, Teredo and 6to4.
+  if (ipv6HasPrefix(address, 0x2001, 23)) return true; // 2001::/23
+  if (ipv6HasPrefix(address, 0x20010db8, 32)) return true; // documentation
+  if (ipv6HasPrefix(address, 0x20020000, 16)) return true; // 6to4
+  if (ipv6HasPrefix(address, 0x3fff0000, 20)) return true; // documentation
 
   return false;
 }
@@ -114,6 +135,10 @@ async function validateUrlSafety(urlString) {
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Only HTTP and HTTPS protocols are allowed");
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error("URL credentials are not allowed");
   }
 
   const hostname = parsed.hostname.toLowerCase();

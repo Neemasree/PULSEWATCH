@@ -42,6 +42,18 @@ const { getSslState } = require("./poller");
 
 const router = express.Router();
 
+// Express 4 requires rejected async route promises to be passed to next().
+for (const method of ["get", "post", "patch", "delete"]) {
+  const register = router[method].bind(router);
+  router[method] = (routePath, ...handlers) => register(
+    routePath,
+    ...handlers.map((handler) => {
+      if (handler.constructor?.name !== "AsyncFunction") return handler;
+      return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+    })
+  );
+}
+
 const forbiddenRequestHeaders = new Set([
   "host", "content-length", "transfer-encoding", "connection",
   "proxy-connection", "proxy-authorization", "upgrade", "expect", "trailer",

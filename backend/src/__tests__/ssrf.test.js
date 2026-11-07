@@ -85,9 +85,40 @@ describe("SSRF Protection", () => {
     test("blocks IPv6 multicast destinations", () => {
       expect(isPrivateIpv6("ff02::1")).toBe(true);
     });
+
+    test("detects the full IPv6 link-local range and expanded IPv4-mapped notation", () => {
+      expect(isPrivateIpv6("fe81::1")).toBe(true);
+      expect(isPrivateIpv6("febf::1")).toBe(true);
+      expect(isPrivateIpv6("0:0:0:0:0:ffff:7f00:1")).toBe(true);
+    });
+
+    test("blocks non-global, transition, and documentation IPv6 ranges", () => {
+      for (const ip of [
+        "::",
+        "::8.8.8.8",
+        "64:ff9b::7f00:1",
+        "2001:0::1",
+        "2001:db8::1",
+        "2002:7f00:1::1",
+        "3fff::1",
+        "4000::1",
+      ]) {
+        expect(isPrivateIpv6(ip)).toBe(true);
+      }
+    });
+
+    test("allows assigned public global-unicast IPv6 addresses", () => {
+      expect(isPrivateIpv6("2606:4700:4700::1111")).toBe(false);
+      expect(isPrivateIpv6("2001:4860:4860::8888")).toBe(false);
+    });
   });
 
   describe("validateUrlSafety", () => {
+    test("rejects URLs containing embedded credentials", async () => {
+      await expect(validateUrlSafety("https://user:secret@example.com"))
+        .rejects.toThrow(/URL credentials are not allowed/);
+    });
+
     test("rejects non-http/https schemes", async () => {
       await expect(validateUrlSafety("ftp://example.com")).rejects.toThrow(
         /Only HTTP and HTTPS protocols are allowed/

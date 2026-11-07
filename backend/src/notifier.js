@@ -6,6 +6,16 @@ const { getChannel } = require("./db/alertChannels");
 const pool = require("./db/pool");
 const { validateUrlSafety, safeLookup } = require("./ssrf");
 
+async function recordDelivery(channelId, delivery) {
+  try {
+    await client.lpush(`alert-deliveries:${channelId}`, JSON.stringify(delivery));
+    await client.ltrim(`alert-deliveries:${channelId}`, 0, 49);
+  } catch (err) {
+    // Logging must not turn a successful webhook POST into a retry/duplicate.
+    console.error(`[Notifier] delivery history unavailable for channel ${channelId}: ${err.code || "redis_error"}`);
+  }
+}
+
 async function deliver(channel, event, monitor, result) {
   const payload = channel.type === "slack"
     ? { blocks: [{ type: "section", text: { type: "mrkdwn", text: `*${event}* ${monitor.name} (${monitor.url})` } }] }
@@ -28,8 +38,7 @@ async function deliver(channel, event, monitor, result) {
         maxBodyLength: 1024 * 1024,
       });
       const delivery = { event, status: "delivered", statusCode: response.status, timestamp: new Date().toISOString() };
-      await client.lpush(`alert-deliveries:${channel.id}`, JSON.stringify(delivery));
-      await client.ltrim(`alert-deliveries:${channel.id}`, 0, 49);
+      await recordDelivery(channel.id, delivery);
       return delivery;
     } catch (err) {
       lastError = err;
@@ -44,9 +53,8 @@ async function deliver(channel, event, monitor, result) {
     error: lastError.code || "delivery_failed",
     timestamp: new Date().toISOString(),
   };
-  await client.lpush(`alert-deliveries:${channel.id}`, JSON.stringify(delivery));
-  await client.ltrim(`alert-deliveries:${channel.id}`, 0, 49);
-  console.error(`[Notifier] channel ${channel.id}: ${lastError.message}`);
+  await recordDelivery(channel.id, delivery);
+  console.error(`[Notifier] channel ${channel.id}: ${lastError.code || "delivery_failed"}`);
   return delivery;
 }
 

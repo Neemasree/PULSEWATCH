@@ -8,6 +8,9 @@ const {
   getAllMonitors: getCachedMonitors,
   getActiveMonitors,
   getMonitorsForUser,
+  notifyMonitorAdded,
+  notifyMonitorUpdated,
+  notifyMonitorRemoved,
   registry,
 } = require("../endpointRegistry");
 
@@ -15,6 +18,37 @@ describe("endpoint registry restart hydration", () => {
   afterEach(() => {
     registry.removeAllListeners();
     getAllMonitors.mockReset();
+  });
+
+  test("active edits emit update while pause and resume emit lifecycle events", () => {
+    const original = { id: 901, user_id: 19, enabled: true, name: "Original", url: "https://a.example.com" };
+    const edited = { ...original, name: "Edited" };
+    const paused = { ...edited, enabled: false };
+    const resumed = { ...paused, enabled: true };
+
+    const events = [];
+    registry.on("added", (monitor) => events.push(["added", monitor.id]));
+    registry.on("updated", (next, previous) => events.push(["updated", next.id, previous.name]));
+    registry.on("removed", (monitor) => events.push(["removed", monitor.id]));
+
+    notifyMonitorAdded(original);
+    events.length = 0;
+
+    notifyMonitorUpdated(original, edited);
+    expect(events).toEqual([["updated", 901, "Original"]]);
+    expect(getCachedMonitors().find((monitor) => monitor.id === 901)).toEqual(edited);
+
+    notifyMonitorUpdated(edited, paused);
+    expect(events[1]).toEqual(["removed", 901]);
+    expect(getCachedMonitors().find((monitor) => monitor.id === 901)).toEqual(paused);
+    expect(getActiveMonitors().some((monitor) => monitor.id === 901)).toBe(false);
+
+    notifyMonitorUpdated(paused, resumed);
+    expect(events[2]).toEqual(["added", 901]);
+    expect(getActiveMonitors().some((monitor) => monitor.id === 901)).toBe(true);
+
+    notifyMonitorRemoved(resumed);
+    expect(getCachedMonitors().some((monitor) => monitor.id === 901)).toBe(false);
   });
 
   test("restores paused monitors for ownership while polling only enabled monitors", async () => {

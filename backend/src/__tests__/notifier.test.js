@@ -44,6 +44,20 @@ describe("webhook delivery hardening", () => {
     expect(client.ltrim).toHaveBeenCalledWith("alert-deliveries:41", 0, 49);
   });
 
+  test("does not resend a webhook when delivery-history storage fails", async () => {
+    client.lpush.mockRejectedValueOnce(new Error("Redis unavailable"));
+
+    const result = await deliver(
+      { id: 43, type: "webhook", target_url: "https://hooks.example.com/ingest" },
+      "recovered",
+      { id: 7, name: "Checkout API", url: "https://shop.example.com" },
+      { status: "up" }
+    );
+
+    expect(result.status).toBe("delivered");
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
   test("stores a stable error code instead of raw request details", async () => {
     const secretUrl = "https://hooks.example.com/path?token=do-not-store";
     axios.post.mockRejectedValueOnce(Object.assign(new Error(secretUrl), { code: "ECONNRESET" }))

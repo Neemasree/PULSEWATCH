@@ -1,8 +1,10 @@
 const axios = require("axios");
+const http = require("http");
+const https = require("https");
 const { client } = require("./redisClient");
 const { getChannel } = require("./db/alertChannels");
 const pool = require("./db/pool");
-const { validateUrlSafety } = require("./ssrf");
+const { validateUrlSafety, safeLookup } = require("./ssrf");
 
 async function deliver(channel, event, monitor, result) {
   const payload = channel.type === "slack"
@@ -14,7 +16,17 @@ async function deliver(channel, event, monitor, result) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await validateUrlSafety(channel.target_url);
-      const response = await axios.post(channel.target_url, payload, { timeout: 5000 });
+      const response = await axios.post(channel.target_url, payload, {
+        timeout: 5000,
+        // Never follow an unvalidated webhook redirect to an internal address.
+        // The connection-time lookup also protects against DNS rebinding after
+        // the initial validation. Redirects are intentionally not supported.
+        maxRedirects: 0,
+        httpAgent: new http.Agent({ lookup: safeLookup }),
+        httpsAgent: new https.Agent({ lookup: safeLookup }),
+        maxContentLength: 1024 * 1024,
+        maxBodyLength: 1024 * 1024,
+      });
       const delivery = { event, status: "delivered", statusCode: response.status, timestamp: new Date().toISOString() };
       await client.lpush(`alert-deliveries:${channel.id}`, JSON.stringify(delivery));
       await client.ltrim(`alert-deliveries:${channel.id}`, 0, 49);
@@ -24,7 +36,14 @@ async function deliver(channel, event, monitor, result) {
       if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
     }
   }
-  const delivery = { event, status: "failed", error: lastError.message, timestamp: new Date().toISOString() };
+  // Do not persist raw HTTP error messages; some clients include request URLs
+  // which may contain sensitive query parameters or credentials.
+  const delivery = {
+    event,
+    status: "failed",
+    error: lastError.code || "delivery_failed",
+    timestamp: new Date().toISOString(),
+  };
   await client.lpush(`alert-deliveries:${channel.id}`, JSON.stringify(delivery));
   await client.ltrim(`alert-deliveries:${channel.id}`, 0, 49);
   console.error(`[Notifier] channel ${channel.id}: ${lastError.message}`);

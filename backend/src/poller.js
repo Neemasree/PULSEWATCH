@@ -134,6 +134,8 @@ async function performMonitorCheck(monitorId) {
     }
   }
 
+  if (monitorState.get(monitorId) !== state) return;
+
   const raw = await pingUrl(monitor.url, {
     method: monitor.method,
     headers: monitor.request_headers,
@@ -142,6 +144,9 @@ async function performMonitorCheck(monitorId) {
     keywordMode: monitor.keyword_mode,
     timeoutMs: monitor.timeout_ms,
   });
+  // The monitor may have been edited, paused or deleted while the HTTP request
+  // was in flight. Do not publish stale results or schedule another loop.
+  if (monitorState.get(monitorId) !== state) return;
 
   // Override status based on expected_status
   const isExpected = raw.httpStatus === state.expectedStatus;
@@ -296,7 +301,7 @@ async function performMonitorCheck(monitorId) {
     `${result.responseTime}ms | z=${anomaly.zScore ?? "N/A"} | next=${(nextInterval / 1000).toFixed(1)}s`
   );
 
-  if (monitorState.has(monitorId)) {
+  if (monitorState.get(monitorId) === state) {
     state.timeoutHandle = setTimeout(() => {
       state.timeoutHandle = null;
       checkMonitor(monitorId);
@@ -331,6 +336,7 @@ async function checkMonitor(monitorId) {
 
 function startPolling() {
   pollingStartTime = Date.now();
+  totalAdaptiveChecks = 0;
   const monitors = getActiveMonitors();
   console.log(`[Poller] Starting adaptive polling for ${monitors.length} monitors`);
 
@@ -401,14 +407,19 @@ function stopPolling() {
 
 function logComparisonStats() {
   if (!pollingStartTime) return;
-  const elapsedSec = (Date.now() - pollingStartTime) / 1000;
-  const fixedTotal = Math.floor((elapsedSec / 10) * monitorState.size);
-  const saved      = fixedTotal - totalAdaptiveChecks;
-  const pct        = fixedTotal > 0 ? ((saved / fixedTotal) * 100).toFixed(1) : "0.0";
+  const elapsedMs = Date.now() - pollingStartTime;
+  const elapsedSec = elapsedMs / 1000;
+  const states = [...monitorState.entries()];
+  const adaptiveChecks = states.reduce((sum, [, state]) => sum + state.checkCount, 0);
+  const fixedTotal = states.reduce((sum, [, state]) => (
+    sum + Math.floor(elapsedMs / Math.max(1, state.baseIntervalMs))
+  ), 0);
+  const saved = fixedTotal - adaptiveChecks;
+  const pct = fixedTotal > 0 ? ((saved / fixedTotal) * 100).toFixed(1) : "0.0";
   console.log("─".repeat(60));
-  console.log(`[Adaptive Polling] ${(elapsedSec / 60).toFixed(1)}min | adaptive=${totalAdaptiveChecks} | fixed=${fixedTotal} | saved=${pct}%`);
-  for (const [id, s] of monitorState) {
-    console.log(`  monitor ${id}: ${s.checkCount} checks, interval=${(s.currentIntervalMs / 1000).toFixed(0)}s`);
+  console.log(`[Adaptive Polling] ${(elapsedSec / 60).toFixed(1)}min | adaptive=${adaptiveChecks} | fixed=${fixedTotal} | saved=${pct}%`);
+  for (const [id, state] of states) {
+    console.log(`  monitor ${id}: ${state.checkCount} checks, interval=${(state.currentIntervalMs / 1000).toFixed(0)}s`);
   }
   console.log("─".repeat(60));
 }
@@ -421,7 +432,9 @@ function getPollingState(userId = null, isAdmin = true) {
   const monitorCount = visibleEntries.length;
   const scopedChecks = visibleEntries.reduce((sum, [, state]) => sum + state.checkCount, 0);
   const elapsedMs = pollingStartTime ? Date.now() - pollingStartTime : 0;
-  const fixedTotal = Math.floor((elapsedMs / 10_000) * monitorCount);
+  const fixedTotal = visibleEntries.reduce((sum, [, state]) => (
+    sum + Math.floor(elapsedMs / Math.max(1, state.baseIntervalMs))
+  ), 0);
   const saved = fixedTotal - scopedChecks;
 
   return {

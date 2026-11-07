@@ -54,6 +54,12 @@ const rawOrigin = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
 const ALLOWED_ORIGINS = rawOrigin.split(",").map((s) => s.trim());
 const IS_PROD = process.env.NODE_ENV === "production";
 
+function parsePositiveId(raw) {
+  if (typeof raw !== "string" || !/^[0-9]+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
 // ─── Express app ──────────────────────────────────────────────────────────────
 const app = express();
 const rawTrustProxy = process.env.TRUST_PROXY;
@@ -81,7 +87,7 @@ app.use(cors({
 }));
 
 // 3. Body + cookie parsing
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
 // ─── Rate limiter — IP-level brute force protection on login ──────────────────
@@ -310,8 +316,8 @@ app.use("/api/monitors", monitorsRouter);
 app.use("/api/alert-channels", alertChannelsRouter);
 
 app.get("/api/monitors/:id/maintenance", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid monitor ID" });
+  const id = parsePositiveId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid monitor ID" });
   try {
     const windows = await getMaintenanceWindows(id, req.user.sub, req.user.role === "admin");
     if (!windows.length && req.user.role !== "admin") {
@@ -323,10 +329,10 @@ app.get("/api/monitors/:id/maintenance", requireAuth, async (req, res) => {
 });
 
 app.post("/api/monitors/:id/maintenance", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parsePositiveId(req.params.id);
   const startsAt = new Date(req.body?.starts_at);
   const endsAt = new Date(req.body?.ends_at);
-  if (isNaN(id) || isNaN(startsAt.getTime()) || isNaN(endsAt.getTime()) || endsAt <= startsAt) {
+  if (id === null || isNaN(startsAt.getTime()) || isNaN(endsAt.getTime()) || endsAt <= startsAt) {
     return res.status(400).json({ error: "Valid starts_at and ends_at with ends_at after starts_at are required" });
   }
   try {
@@ -340,8 +346,8 @@ app.post("/api/monitors/:id/maintenance", requireAuth, csrfProtect, async (req, 
 });
 
 app.delete("/api/maintenance/:id", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid maintenance ID" });
+  const id = parsePositiveId(req.params.id);
+  if (id === null) return res.status(400).json({ error: "Invalid maintenance ID" });
   const deleted = await deleteMaintenance(id, req.user.sub, req.user.role === "admin");
   if (!deleted) return res.status(404).json({ error: "Maintenance window not found" });
   return res.json({ message: "Maintenance window deleted" });
@@ -494,6 +500,23 @@ app.get("/api/status", requireAuth, async (req, res) => {
 
 app.get("/api/polling-stats", requireAuth, (req, res) => {
   res.json(getPollingState(req.user.sub, req.user.role === "admin"));
+});
+
+// Centralized parser/CORS/unexpected error response. Route-level async handlers
+// keep their own domain responses; this prevents raw stack traces from leaking.
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body exceeds the 1 MB limit" });
+  }
+  if (err instanceof SyntaxError && err.status === 400 && Object.prototype.hasOwnProperty.call(err, "body")) {
+    return res.status(400).json({ error: "Invalid JSON request body" });
+  }
+  if (typeof err.message === "string" && err.message.startsWith("CORS:")) {
+    return res.status(403).json({ error: "Origin is not allowed" });
+  }
+  console.error("[HTTP] Unhandled request error:", err.message);
+  return res.status(500).json({ error: "Internal server error" });
 });
 
 // ─── Poller → Socket.io bridge ────────────────────────────────────────────────

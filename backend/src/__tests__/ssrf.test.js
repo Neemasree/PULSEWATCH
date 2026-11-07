@@ -41,9 +41,10 @@ describe("SSRF Protection", () => {
     });
 
     test("blocks documentation and benchmarking IPv4 ranges", () => {
-      for (const ip of ["192.0.2.1", "198.51.100.10", "203.0.113.8", "198.18.0.1", "198.19.255.254", "192.88.99.1"]) {
+      for (const ip of ["192.0.0.1", "192.0.2.1", "198.51.100.10", "203.0.113.8", "198.18.0.1", "198.19.255.254", "192.88.99.1"]) {
         expect(isPrivateIpv4(ip)).toBe(true);
       }
+      expect(isPrivateIpv4("192.0.1.1")).toBe(false);
     });
 
     test("allows public IPv4 addresses", () => {

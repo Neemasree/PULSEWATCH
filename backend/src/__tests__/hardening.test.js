@@ -86,6 +86,19 @@ describe("security hardening", () => {
     else process.env.ADMIN_PASSWORD = originalPassword;
   });
 
+  test("oversized JSON request bodies are rejected before route handling", async () => {
+    const response = await request(app)
+      .post("/api/auth/register")
+      .send({
+        username: "body-limit-user",
+        password: "safe-password-123",
+        name: "x".repeat(1024 * 1024),
+      });
+
+    expect(response.status).toBe(413);
+    expect(response.body.error).toMatch(/1 MB limit/i);
+  });
+
   test("removed debug and arbitrary-check routes return 404", async () => {
     expect((await request(app).get("/api/debug/cors")).status).toBe(404);
     expect((await request(app).get("/api/check?url=https://example.com")).status).toBe(404);

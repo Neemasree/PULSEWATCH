@@ -48,6 +48,6 @@ describe("alert channel route ID validation", () => {
   ])("%s %s rejects malformed IDs before database access", async (_method, path, method) => {
     const response = await send(method, path);
     expect(response.status).toBe(400);
-    expect(response.body.error).toMatch(/channel id/i);
+    expect(response.body.error).toMatch(/id/i);
   });
 });

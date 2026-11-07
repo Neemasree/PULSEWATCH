@@ -9,7 +9,10 @@ function getDatabaseSslConfig(databaseUrl, databaseSsl, rejectUnauthorizedOverri
       return { rejectUnauthorized: rejectUnauthorizedOverride !== "false" };
     }
   } else if (typeof pgHost === "string") {
-    hostname = pgHost.toLowerCase().replace(/^\\[|\\]$/g, "");
+    hostname = pgHost.toLowerCase();
+    if (hostname.startsWith("[") && hostname.endsWith("]")) {
+      hostname = hostname.slice(1, -1);
+    }
   } else {
     return false;
   }

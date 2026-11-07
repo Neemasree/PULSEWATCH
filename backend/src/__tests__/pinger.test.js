@@ -18,7 +18,7 @@ describe("pingUrl", () => {
     const options = axios.request.mock.calls[0][0];
     expect(options.maxContentLength).toBe(1024 * 1024);
     expect(options.maxBodyLength).toBe(1024 * 1024);
-    expect(options.maxRedirects).toBe(3);
+    expect(options.maxRedirects).toBe(0);
   });
 
   test("classifies an oversized response as response_too_large", async () => {

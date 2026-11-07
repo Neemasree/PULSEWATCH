@@ -2,7 +2,7 @@ const express = require("express");
 const { z } = require("zod");
 const { requireAuth, csrfProtect } = require("./auth");
 const { validateUrlSafety } = require("./ssrf");
-const { listChannels, getChannel, countChannels, createChannel, deleteChannel } = require("./db/alertChannels");
+const { listChannels, getChannel, createChannel, deleteChannel } = require("./db/alertChannels");
 const { testChannel } = require("./notifier");
 const { client } = require("./redisClient");
 
@@ -20,11 +20,22 @@ router.get("/", requireAuth, async (req, res) => {
 router.post("/", requireAuth, csrfProtect, async (req, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues.map((i) => i.message).join(", ") });
-  if (await countChannels(req.user.sub) >= 10) return res.status(400).json({ error: "Maximum of 10 alert channels reached" });
   try { await validateUrlSafety(parsed.data.target_url); }
   catch (err) { return res.status(400).json({ error: `SSRF rejected: ${err.message}` }); }
-  const channel = await createChannel({ ...parsed.data, userId: req.user.sub, events: parsed.data.events || ["down", "recovered", "anomaly", "ssl_expiring"] });
-  res.status(201).json({ channel });
+  try {
+    const channel = await createChannel({
+      ...parsed.data,
+      userId: req.user.sub,
+      events: parsed.data.events || ["down", "recovered", "anomaly", "ssl_expiring"],
+    });
+    return res.status(201).json({ channel });
+  } catch (err) {
+    if (err.code === "CHANNEL_LIMIT_REACHED") {
+      return res.status(400).json({ error: "Maximum of 10 alert channels reached" });
+    }
+    console.error("[AlertChannels] Create failed:", err.message);
+    return res.status(500).json({ error: "Unable to create alert channel" });
+  }
 });
 router.post("/:id/test", requireAuth, csrfProtect, async (req, res) => {
   const idRaw = req.params.id;

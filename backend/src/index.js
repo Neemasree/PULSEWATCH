@@ -154,8 +154,8 @@ app.post("/api/auth/login", loginLimiter, async (req, res) => {
     setAuthCookies(res, accessToken, refreshToken);
     return res.json({ user });
   } catch (err) {
-    const isLockout = err.message.startsWith("Account locked");
-    return res.status(401).json({ error: isLockout ? err.message : "Invalid credentials" });
+    // Keep responses identical for unknown, incorrect and locked accounts.
+    return res.status(401).json({ error: "Invalid credentials" });
   }
 });
 
@@ -166,7 +166,8 @@ app.post("/api/auth/login", loginLimiter, async (req, res) => {
  */
 app.post("/api/auth/register", registerLimiter, async (req, res) => {
   const { username, password, name } = req.body || {};
-  if (!username || !password || !name) {
+  if (typeof username !== "string" || typeof password !== "string" || typeof name !== "string" ||
+      !username.trim() || !password || !name.trim()) {
     return res.status(400).json({ error: "Username, password and name are required" });
   }
   try {

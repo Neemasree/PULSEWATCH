@@ -2,9 +2,20 @@ name: CI
 on:
   push:
   pull_request:
+
+# Keep only the newest validation for a branch. A rapid sequence of direct
+# commits should not leave dozens of stale CI runs queued behind one another.
+concurrency:
+  group: pulsewatch-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -43,6 +54,7 @@ jobs:
   browser-e2e:
     name: Browser end-to-end workflows
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16

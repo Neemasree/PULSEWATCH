@@ -20,7 +20,31 @@ function getCsrfToken() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
-let _isRefreshing = false;
+let _refreshPromise = null;
+
+async function refreshAccessToken() {
+  if (!_refreshPromise) {
+    _refreshPromise = (async () => {
+      const refreshRes = await fetch(`${BASE}/api/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!refreshRes.ok) {
+        window.dispatchEvent(new CustomEvent("pw:session-expired"));
+        const data = await refreshRes.json().catch(() => ({}));
+        throw new Error(data.error || "Session expired");
+      }
+      return true;
+    })().catch((error) => {
+      window.dispatchEvent(new CustomEvent("pw:session-expired"));
+      throw error;
+    }).finally(() => {
+      _refreshPromise = null;
+    });
+  }
+  return _refreshPromise;
+}
 
 /**
  * @param {string}  method
@@ -48,26 +72,9 @@ async function request(method, path, body, { skipRefresh = false, retrying = fal
   // Only runs for DATA routes (skipRefresh=false) and only once (retrying=false).
   // Auth routes (me, login, refresh, logout) always pass skipRefresh=true so
   // a 401 from them just throws — it means "not authenticated", not "expired token".
-  if (res.status === 401 && !skipRefresh && !retrying && !_isRefreshing) {
-    _isRefreshing = true;
-    try {
-      const refreshRes = await fetch(`${BASE}/api/auth/refresh`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (!refreshRes.ok) {
-        // Refresh token also expired/missing — session is truly dead
-        // Use React Router navigation instead of hard reload to avoid HMR conflict
-        window.dispatchEvent(new CustomEvent("pw:session-expired"));
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Session expired");
-      }
-    } finally {
-      _isRefreshing = false;
-    }
-    // Retry with the fresh access_token cookie now set
+  if (res.status === 401 && !skipRefresh && !retrying) {
+    // All concurrent 401s share one refresh request, then retry independently.
+    await refreshAccessToken();
     return request(method, path, body, { skipRefresh, retrying: true });
   }
 

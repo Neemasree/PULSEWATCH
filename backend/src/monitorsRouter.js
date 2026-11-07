@@ -225,8 +225,8 @@ router.post("/", requireAuth, csrfProtect, async (req, res) => {
  * Fetches details for a single monitor.
  */
 router.get("/:id", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid monitor ID" });
+  const id = Number(req.params.id);
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "Invalid monitor ID" });
 
   try {
     const isAdmin = req.user.role === "admin";
@@ -255,9 +255,9 @@ async function scopedMonitor(req, id) {
 }
 
 router.get("/:id/stats", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = Number(req.params.id);
   const range = req.query.range || "24h";
-  if (isNaN(id) || !STAT_RANGES[range]) return res.status(400).json({ error: "Invalid monitor ID or range" });
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1 || !STAT_RANGES[range]) return res.status(400).json({ error: "Invalid monitor ID or range" });
   const monitor = await scopedMonitor(req, id);
   if (!monitor) return res.status(404).json({ error: "Monitor not found" });
   try {
@@ -291,9 +291,9 @@ router.get("/:id/stats", requireAuth, async (req, res) => {
 });
 
 router.get("/:id/export.csv", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = Number(req.params.id);
   const range = req.query.range || "24h";
-  if (isNaN(id) || !STAT_RANGES[range]) return res.status(400).json({ error: "Invalid monitor ID or range" });
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1 || !STAT_RANGES[range]) return res.status(400).json({ error: "Invalid monitor ID or range" });
   if (!await scopedMonitor(req, id)) return res.status(404).json({ error: "Monitor not found" });
   try {
     const since = Date.now() - STAT_RANGES[range] * 3600000;
@@ -305,8 +305,9 @@ router.get("/:id/export.csv", requireAuth, async (req, res) => {
 });
 
 router.get("/:id/report.csv", requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id) || !await scopedMonitor(req, id)) return res.status(404).json({ error: "Monitor not found" });
+  const id = Number(req.params.id);
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "Invalid monitor ID" });
+  if (!await scopedMonitor(req, id)) return res.status(404).json({ error: "Monitor not found" });
   try {
     const rows = await getRollups(id, new Date(Date.now() - 90 * 24 * 3600000));
     const csv = toCsv(["hour", "total", "up", "sumMs", "minMs", "maxMs"],
@@ -320,8 +321,8 @@ router.get("/:id/report.csv", requireAuth, async (req, res) => {
  * Updates an existing monitor.
  */
 router.patch("/:id", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid monitor ID" });
+  const id = Number(req.params.id);
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "Invalid monitor ID" });
 
   const parseResult = updateMonitorSchema.safeParse(req.body);
   if (!parseResult.success) {
@@ -363,8 +364,8 @@ router.patch("/:id", requireAuth, csrfProtect, async (req, res) => {
  * Deletes a monitor.
  */
 router.delete("/:id", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid monitor ID" });
+  const id = Number(req.params.id);
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "Invalid monitor ID" });
 
   try {
     const isAdmin = req.user.role === "admin";
@@ -387,8 +388,8 @@ router.delete("/:id", requireAuth, csrfProtect, async (req, res) => {
  * Pauses a monitor (sets enabled = false).
  */
 router.post("/:id/pause", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid monitor ID" });
+  const id = Number(req.params.id);
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "Invalid monitor ID" });
 
   try {
     const isAdmin = req.user.role === "admin";
@@ -412,8 +413,8 @@ router.post("/:id/pause", requireAuth, csrfProtect, async (req, res) => {
  * Resumes a paused monitor (sets enabled = true).
  */
 router.post("/:id/resume", requireAuth, csrfProtect, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: "Invalid monitor ID" });
+  const id = Number(req.params.id);
+  if (!/^[0-9]+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "Invalid monitor ID" });
 
   try {
     const isAdmin = req.user.role === "admin";

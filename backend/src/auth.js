@@ -374,12 +374,13 @@ async function rotateRefreshToken(oldRefreshToken) {
     throw new Error("Invalid or expired refresh token");
   }
 
-  // Consume before issuing replacement credentials. This operation is atomic
-  // in Redis, so only one concurrent request can rotate a given token.
-  await consumeRefreshToken(payload.jti, payload.exp * 1000);
-
   const user = await findById(payload.sub);
   if (!user) throw new Error("User no longer exists");
+
+  // Consume before issuing replacement credentials. This operation is atomic
+  // in Redis, so only one concurrent request can rotate a given token. Lookup
+  // first so a transient PostgreSQL outage does not burn a valid refresh token.
+  await consumeRefreshToken(payload.jti, payload.exp * 1000);
 
   const accessToken                              = signAccessToken(user);
   const { token: refreshToken, jti: refreshJti } = signRefreshToken(user);

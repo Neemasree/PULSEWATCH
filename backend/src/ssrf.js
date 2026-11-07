@@ -31,11 +31,7 @@ function isPrivateIpv4(ip) {
   // 100.64.0.0/10 (Carrier-grade NAT)
   if (a === 100 && b >= 64 && b <= 127) return true;
   // IANA special-purpose, documentation, benchmarking and deprecated relay ranges.
-  if (a === 192 && (b === 0 || (b === 0 && parts[2] === 2) || (b === 88 && parts[2] === 99))) return true;
-  if (a === 192 && b === 0 && parts[2] === 2) return true;
-  if (a === 192 && b === 0 && parts[2] === 0) return true;
-  if (a === 192 && b === 0 && parts[2] === 0) return true;
-  if (a === 192 && b === 0 && parts[2] === 2) return true;
+  if (a === 192 && b === 0 && (parts[2] === 0 || parts[2] === 2)) return true;
   if (a === 192 && b === 88 && parts[2] === 99) return true;
   if (a === 198 && (b === 18 || b === 19)) return true;
   if (a === 198 && b === 51 && parts[2] === 100) return true;

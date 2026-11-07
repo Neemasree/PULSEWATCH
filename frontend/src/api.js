@@ -28,7 +28,10 @@ async function refreshAccessToken() {
       const refreshRes = await fetch(`${BASE}/api/auth/refresh`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": getCsrfToken(),
+        },
       });
       if (!refreshRes.ok) {
         window.dispatchEvent(new CustomEvent("pw:session-expired"));

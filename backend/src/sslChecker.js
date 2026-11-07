@@ -1,9 +1,13 @@
 const tls = require("tls");
-const { safeLookup } = require("./ssrf");
+const { safeLookup, validateUrlSafety } = require("./ssrf");
 
-function inspectCertificate(urlString, timeoutMs = 5000) {
+async function inspectCertificate(urlString, timeoutMs = 5000) {
   const url = new URL(urlString);
-  if (url.protocol !== "https:") return Promise.resolve(null);
+  if (url.protocol !== "https:") return null;
+
+  // Re-check DNS/IP safety at the time of the TLS connection, not only when
+  // the monitor was first saved. IP literals are explicitly checked too.
+  await validateUrlSafety(urlString);
 
   return new Promise((resolve, reject) => {
     const socket = tls.connect({

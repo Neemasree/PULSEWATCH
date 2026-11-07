@@ -175,7 +175,9 @@ app.post("/api/auth/register", registerLimiter, async (req, res) => {
     setAuthCookies(res, accessToken, refreshToken);
     return res.status(201).json({ user });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    const status = err.status || (err.code ? 500 : 400);
+    if (status >= 500) console.error("[Auth] Registration failed:", err.message);
+    return res.status(status).json({ error: status >= 500 ? "Unable to register" : err.message });
   }
 });
 
@@ -195,7 +197,7 @@ app.post("/api/auth/refresh", async (req, res) => {
     return res.json({ user });
   } catch (err) {
     clearAuthCookies(res);
-    return res.status(401).json({ error: err.message });
+    return res.status(401).json({ error: "Invalid or expired refresh token" });
   }
 });
 
@@ -207,9 +209,15 @@ app.post("/api/auth/refresh", async (req, res) => {
  */
 app.post("/api/auth/logout", async (req, res) => {
   const refreshToken = req.cookies?.refresh_token;
-  if (refreshToken) await revokeRefreshToken(refreshToken);
-  clearAuthCookies(res);
-  return res.json({ message: "Logged out" });
+  try {
+    if (refreshToken) await revokeRefreshToken(refreshToken);
+    clearAuthCookies(res);
+    return res.json({ message: "Logged out" });
+  } catch (err) {
+    console.error("[Auth] Logout revocation failed:", err.message);
+    clearAuthCookies(res);
+    return res.status(503).json({ error: "Logout could not be completed; please retry" });
+  }
 });
 
 /**
@@ -338,7 +346,8 @@ app.get("/api/public/incidents", async (_req, res) => {
     const all = [...ongoing, ...resolvedNorm].sort((a, b) => b.startedAt - a.startedAt);
     res.json({ incidents: all });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[API] Public incident query failed:", err.message);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -358,7 +367,10 @@ app.get("/api/monitors/:id/maintenance", requireAuth, async (req, res) => {
       if (!monitor) return res.status(404).json({ error: "Monitor not found" });
     }
     return res.json({ windows });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error("[API] Maintenance query failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 app.post("/api/monitors/:id/maintenance", requireAuth, csrfProtect, async (req, res) => {
@@ -377,15 +389,23 @@ app.post("/api/monitors/:id/maintenance", requireAuth, csrfProtect, async (req, 
     });
     if (!window) return res.status(404).json({ error: "Monitor not found" });
     return res.status(201).json({ window });
-  } catch (err) { return res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error("[API] Maintenance creation failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 app.delete("/api/maintenance/:id", requireAuth, csrfProtect, async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid maintenance ID" });
-  const deleted = await deleteMaintenance(id, req.user.sub, req.user.role === "admin");
-  if (!deleted) return res.status(404).json({ error: "Maintenance window not found" });
-  return res.json({ message: "Maintenance window deleted" });
+  try {
+    const deleted = await deleteMaintenance(id, req.user.sub, req.user.role === "admin");
+    if (!deleted) return res.status(404).json({ error: "Maintenance window not found" });
+    return res.json({ message: "Maintenance window deleted" });
+  } catch (err) {
+    console.error("[API] Maintenance deletion failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 /**
@@ -430,7 +450,8 @@ app.get("/api/incidents", requireAuth, async (req, res) => {
     });
     return res.json({ monitorId, incidents });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[API] Request failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -456,7 +477,8 @@ app.get("/api/incidents/:id/events", requireAuth, async (req, res) => {
     if (!events.length) return res.status(404).json({ error: "Incident not found" });
     return res.json({ incidentId, events });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[API] Request failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 

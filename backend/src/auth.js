@@ -187,6 +187,28 @@ async function isBlacklisted(jti) {
   return exists === 1;
 }
 
+/**
+ * Atomically consumes a refresh-token JTI exactly once.
+ * Redis SET NX is the serialization point: concurrent refresh requests
+ * cannot both observe an unused token and rotate it successfully.
+ */
+async function consumeRefreshToken(jti, expMs) {
+  if (typeof jti !== "string" || !jti) {
+    throw new Error("Invalid or expired refresh token");
+  }
+  const ttlSeconds = Math.max(1, Math.ceil((expMs - Date.now()) / 1000));
+  const result = await redisClient.set(
+    `auth:blacklist:${jti}`,
+    "1",
+    "EX",
+    ttlSeconds,
+    "NX"
+  );
+  if (result !== "OK") {
+    throw new Error("Refresh token already used");
+  }
+}
+
 // ── Account lockout store (Redis-backed) ─────────────────────────────────────
 // Keys:
 //   auth:fails:<username>   - counter of consecutive failures (15 min TTL)
@@ -352,11 +374,9 @@ async function rotateRefreshToken(oldRefreshToken) {
     throw new Error("Invalid or expired refresh token");
   }
 
-  if (await isBlacklisted(payload.jti)) {
-    throw new Error("Refresh token already used");
-  }
-
-  await blacklist(payload.jti, payload.exp * 1000);
+  // Consume before issuing replacement credentials. This operation is atomic
+  // in Redis, so only one concurrent request can rotate a given token.
+  await consumeRefreshToken(payload.jti, payload.exp * 1000);
 
   const user = await findById(payload.sub);
   if (!user) throw new Error("User no longer exists");
@@ -481,6 +501,6 @@ module.exports = {
   bootstrapAdmin,
   verifyAccessToken, requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
-  blacklist, isBlacklisted, checkLockout, recordFailure, clearFailures,
+  blacklist, isBlacklisted, consumeRefreshToken, checkLockout, recordFailure, clearFailures,
   ACCESS_SECRET,
 };

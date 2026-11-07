@@ -23,6 +23,7 @@ const { client: redisClient } = require("../redisClient");
 const { app }  = require("../index");
 const {
   openIncident,
+  getOpenIncidentForMonitor,
   resolveIncident,
   acknowledgeIncident,
   getIncidentsByMonitor,
@@ -124,6 +125,14 @@ describe("openIncident", () => {
     const duplicate = await openIncident({ monitorId: publicMonitor.id, startedAt: new Date() });
     expect(duplicate).toBeDefined();
     expect(duplicate.id).toBe(incident.id); // same row returned
+  });
+
+  test("restores an active incident by monitor after process restart", async () => {
+    incident = await openIncident({ monitorId: publicMonitor.id, startedAt: new Date() });
+    const restored = await getOpenIncidentForMonitor(publicMonitor.id);
+    expect(restored).toBeDefined();
+    expect(restored.id).toBe(incident.id);
+    expect(["OPEN", "ACKNOWLEDGED"]).toContain(restored.status);
   });
 });
 

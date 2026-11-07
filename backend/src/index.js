@@ -39,7 +39,7 @@ const {
   setAuthCookies, clearAuthCookies,
 } = require("./auth");
 
-const { getRecentMetrics, getHourlyBuckets } = require("./redisClient");
+const { getRecentMetrics } = require("./redisClient");
 const { startPolling, onResult, getPollingState, getOngoingOutages, getMonitorsForUser } = require("./poller");
 const { loadFromDb, getPublicMonitors } = require("./endpointRegistry");
 const { runMigrations }         = require("../scripts/migrate");
@@ -48,6 +48,7 @@ const alertChannelsRouter       = require("./alertChannelsRouter");
 const { initSocketHandler, broadcastMetric, broadcastPollingStats, broadcastIncidentUpdate } = require("./socketHandler");
 const { getPublicIncidents, getPublicOngoingIncidents, getIncidentsByMonitor, getIncidentEvents, acknowledgeIncident } = require("./db/incidents");
 const { getMaintenanceWindows, createMaintenance, deleteMaintenance } = require("./db/maintenance");
+const { getRollups } = require("./db/rollups");
 
 const PORT = process.env.PORT || 3000;
 const rawOrigin = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
@@ -233,34 +234,65 @@ app.get("/api/public/status", async (_req, res) => {
   try {
     const now = Date.now();
     const H24 = 24 * 60 * 60 * 1000;
-    const D7  = 7 * H24;
+    const D7 = 7 * H24;
+    const D90 = 90 * 24 * H24;
+    const startDay = Math.floor((now - D90) / (24 * H24));
+    const currentDay = Math.floor(now / (24 * H24));
 
     const services = await Promise.all(
       getPublicMonitors().map(async (monitor) => {
-        const results       = await getRecentMetrics(monitor.id, 200);
-        const hourlyBuckets = await getHourlyBuckets(monitor.id, 90);
-        const latest        = results[0] || null;
-        const b24 = results.filter((r) => now - new Date(r.timestamp).getTime() < H24);
-        const b7  = results.filter((r) => now - new Date(r.timestamp).getTime() < D7);
-        const upPct  = (b) => b.length ? parseFloat(((b.filter((r) => r.status === "up").length / b.length) * 100).toFixed(2)) : null;
-        const avgLat = (b) => b.length ? Math.round(b.reduce((s, r) => s + (r.responseTime || 0), 0) / b.length) : null;
+        const [results, rollups] = await Promise.all([
+          getRecentMetrics(monitor.id, 1),
+          getRollups(monitor.id, new Date(now - D90)),
+        ]);
+        const latest = results[0] || null;
+        const summarise = (rows) => {
+          const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
+          const up = rows.reduce((sum, row) => sum + Number(row.up || 0), 0);
+          const sumMs = rows.reduce((sum, row) => sum + Number(row.sum_ms || 0), 0);
+          return {
+            uptime: total ? Number(((up / total) * 100).toFixed(2)) : null,
+            averageLatency: total ? Math.round(sumMs / total) : null,
+            total,
+            up,
+          };
+        };
+        const dayTotals = new Map();
+        for (const row of rollups) {
+          const day = Math.floor(new Date(row.hour).getTime() / (24 * H24));
+          const item = dayTotals.get(day) || { total: 0, up: 0 };
+          item.total += Number(row.total || 0);
+          item.up += Number(row.up || 0);
+          dayTotals.set(day, item);
+        }
+        const hourlyBuckets = [];
+        for (let day = startDay; day <= currentDay; day++) {
+          const item = dayTotals.get(day);
+          if (!item || item.total === 0) hourlyBuckets.push("unknown");
+          else if (item.up === item.total) hourlyBuckets.push("up");
+          else if (item.up === 0) hourlyBuckets.push("down");
+          else hourlyBuckets.push("degraded");
+        }
+        const last24 = summarise(rollups.filter((row) => new Date(row.hour).getTime() >= now - H24));
+        const last7d = summarise(rollups.filter((row) => new Date(row.hour).getTime() >= now - D7));
         return {
-          monitorId:     monitor.id,
-          url:           monitor.url,
-          name:          monitor.name,
+          monitorId: monitor.id,
+          url: monitor.url,
+          name: monitor.name,
           currentStatus: latest?.maintenance ? "maintenance" : (latest?.status ?? "unknown"),
-          latency:       latest?.responseTime ?? null,
-          uptime24h:     upPct(b24),
-          uptime7d:      upPct(b7),
-          avgLatency24h: avgLat(b24),
-          lastChecked:   latest?.timestamp ?? null,
+          latency: latest?.responseTime ?? null,
+          uptime24h: last24.uptime,
+          uptime7d: last7d.uptime,
+          avgLatency24h: last24.averageLatency,
+          lastChecked: latest?.timestamp ?? null,
           hourlyBuckets,
         };
       })
     );
     res.json({ services, generatedAt: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[PublicStatus] Query failed:", err.message);
+    res.status(500).json({ error: "Unable to load public status" });
   }
 });
 
@@ -492,7 +524,10 @@ app.get("/api/status", requireAuth, async (req, res) => {
       const [r] = await getRecentMetrics(m.id, 1);
       latest[m.id] = { monitor: m, result: r || null };
     }));
-    return res.json({ monitors: latest, polling: getPollingState() });
+    return res.json({
+      monitors: latest,
+      polling: getPollingState(req.user.sub, isAdmin),
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

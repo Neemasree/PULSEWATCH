@@ -377,15 +377,27 @@ app.post("/api/monitors/:id/maintenance", requireAuth, csrfProtect, async (req, 
   const id = parsePositiveId(req.params.id);
   if (id === null) return res.status(400).json({ error: "Invalid monitor ID" });
 
-  const startsAt = new Date(req.body?.starts_at);
-  const endsAt = new Date(req.body?.ends_at);
-  if (isNaN(startsAt.getTime()) || isNaN(endsAt.getTime()) || endsAt <= startsAt) {
-    return res.status(400).json({ error: "Valid starts_at and ends_at with ends_at after starts_at are required" });
+  const startsAtRaw = req.body?.starts_at;
+  const endsAtRaw = req.body?.ends_at;
+  if (typeof startsAtRaw !== "string" || typeof endsAtRaw !== "string") {
+    return res.status(400).json({ error: "starts_at and ends_at must be ISO date strings" });
+  }
+  const startsAt = new Date(startsAtRaw);
+  const endsAt = new Date(endsAtRaw);
+  const durationMs = endsAt.getTime() - startsAt.getTime();
+  if (!Number.isFinite(startsAt.getTime()) || !Number.isFinite(endsAt.getTime()) ||
+      durationMs <= 0 || durationMs > 365 * 24 * 60 * 60 * 1000) {
+    return res.status(400).json({ error: "Maintenance window must have valid dates and last no more than 365 days" });
+  }
+  const reason = req.body.reason;
+  if (reason !== undefined && reason !== null &&
+      (typeof reason !== "string" || reason.trim().length > 300)) {
+    return res.status(400).json({ error: "Maintenance reason must be a string of at most 300 characters" });
   }
   try {
     const window = await createMaintenance({
       monitorId: id, userId: req.user.sub, isAdmin: req.user.role === "admin",
-      startsAt, endsAt, reason: req.body.reason,
+      startsAt, endsAt, reason: typeof reason === "string" ? reason.trim() || null : null,
     });
     if (!window) return res.status(404).json({ error: "Monitor not found" });
     return res.status(201).json({ window });

@@ -7,6 +7,20 @@ const { testChannel } = require("./notifier");
 const { client } = require("./redisClient");
 
 const router = express.Router();
+
+// Express 4 does not automatically forward rejected async route promises.
+// Wrap async handlers at registration so the API's centralized error handler
+// can produce consistent, non-sensitive responses.
+for (const method of ["get", "post", "patch", "delete"]) {
+  const register = router[method].bind(router);
+  router[method] = (routePath, ...handlers) => register(
+    routePath,
+    ...handlers.map((handler) => {
+      if (handler.constructor?.name !== "AsyncFunction") return handler;
+      return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+    })
+  );
+}
 const schema = z.object({
   type: z.enum(["slack", "discord", "webhook"]),
   name: z.string().trim().min(1).max(100),

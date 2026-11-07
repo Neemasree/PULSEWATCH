@@ -249,6 +249,24 @@ describe("Monitors API (/api/monitors)", () => {
       expect(response.body.error).toMatch(/headers/i);
     });
 
+    test.each([
+      ["PATCH snake_case headers", { request_headers: { Host: "127.0.0.1" } }],
+      ["PATCH camelCase headers", { requestHeaders: { "Content-Length": "0" } }],
+    ])("rejects dangerous %s", async (_label, headerField) => {
+      const created = await authA
+        .attach(request(app).post("/api/monitors"))
+        .send({ name: "Header Update Check", url: "https://example.com" })
+        .expect(201);
+      const response = await authA
+        .attach(request(app).patch(`/api/monitors/${created.body.monitor.id}`))
+        .send(headerField)
+        .expect(400);
+      expect(response.body.error).toMatch(/headers/i);
+      await authA
+        .attach(request(app).delete(`/api/monitors/${created.body.monitor.id}`))
+        .expect(200);
+    });
+
     test("rejects more than 50 custom headers", async () => {
       const headers = Object.fromEntries(
         Array.from({ length: 51 }, (_, index) => [`X-Custom-${index}`, "value"])

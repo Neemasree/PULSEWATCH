@@ -19,9 +19,13 @@
  */
 
 const axios = require("axios");
+const crypto = require("crypto");
+const http = require("http");
+const https = require("https");
+const { acquireCooldown } = require("./redisClient");
+const { validateUrlSafety, safeLookup } = require("./ssrf");
 
-const COOLDOWN_MS   = 5 * 60 * 1000; // 5 minutes per URL (anomaly alerts)
-const lastAlertTime = new Map();      // url → timestamp of last anomaly alert
+const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes per monitored URL
 
 /**
  * POSTs a formatted alert to the configured Slack webhook.
@@ -40,12 +44,17 @@ async function sendSlackAlert(url, result, zScore) {
 
   const isDownAlert = zScore === null;
 
-  // Anomaly alerts have their own cooldown tracked here.
-  // DOWN alert cooldown is handled by poller.js — don't double-gate it.
+  // Anomaly cooldown is distributed and survives process restarts. The
+  // monitored URL is hashed so Redis keys do not expose user-supplied URLs.
   if (!isDownAlert) {
-    const last = lastAlertTime.get(url) || 0;
-    if (Date.now() - last < COOLDOWN_MS) return;
-    lastAlertTime.set(url, Date.now());
+    const digest = crypto.createHash("sha256").update(url).digest("hex");
+    try {
+      const acquired = await acquireCooldown(`pulsewatch:cooldown:anomaly:${digest}`, COOLDOWN_MS);
+      if (!acquired) return;
+    } catch (err) {
+      // Alerting is best-effort: Redis outages must not suppress an anomaly.
+      console.error("[AlertCooldown] Redis unavailable; continuing without cooldown");
+    }
   }
 
   const emoji   = isDownAlert ? ":red_circle:" : ":rotating_light:";
@@ -76,11 +85,21 @@ async function sendSlackAlert(url, result, zScore) {
   };
 
   try {
-    await axios.post(webhookUrl, payload, { timeout: 5000 });
-    console.log(`[Alert] Slack alert sent for ${url} (${isDownAlert ? "DOWN" : `z=${zScore}`})`);
+    await validateUrlSafety(webhookUrl);
+    await axios.post(webhookUrl, payload, {
+      timeout: 5000,
+      // Never follow redirects to private addresses, and re-check DNS at
+      // connection time to make the Slack integration SSRF-safe.
+      maxRedirects: 0,
+      httpAgent: new http.Agent({ lookup: safeLookup }),
+      httpsAgent: new https.Agent({ lookup: safeLookup }),
+      maxContentLength: 1024 * 1024,
+      maxBodyLength: 1024 * 1024,
+    });
+    console.log(`[Alert] Slack alert sent (${isDownAlert ? "DOWN" : "anomaly"})`);
   } catch (err) {
-    // A failed alert must never crash the monitoring loop
-    console.error(`[Alert] Slack POST failed: ${err.message}`);
+    // Avoid logging webhook URLs or untrusted response/error bodies.
+    console.error(`[Alert] Slack delivery failed: ${err.code || "delivery_failed"}`);
   }
 }
 

@@ -338,7 +338,10 @@ router.get("/:id/report.csv", requireAuth, async (req, res) => {
     const csv = toCsv(["hour", "total", "up", "sumMs", "minMs", "maxMs"],
       rows.map((row) => [row.hour, row.total, row.up, row.sum_ms, row.min_ms, row.max_ms]));
     res.type("text/csv").attachment(`monitor-${id}-report.csv`).send(csv);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error("[Monitors] CSV report failed:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 /**
@@ -380,7 +383,8 @@ router.patch("/:id", requireAuth, csrfProtect, async (req, res) => {
 
     return res.json({ monitor: updated });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[Monitors] Request failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 

@@ -414,20 +414,24 @@ function logComparisonStats() {
 }
 
 function getPollingState(userId = null, isAdmin = true) {
-  const elapsedMs  = pollingStartTime ? Date.now() - pollingStartTime : 0;
-  const fixedTotal = Math.floor((elapsedMs / 10_000) * monitorState.size);
-  const saved      = fixedTotal - totalAdaptiveChecks;
+  const visibleEntries = [...monitorState.entries()].filter(([id]) => {
+    if (userId === null || isAdmin) return true;
+    return getMonitorsForUser(userId, false).some((monitor) => monitor.id === id);
+  });
+  const monitorCount = visibleEntries.length;
+  const scopedChecks = visibleEntries.reduce((sum, [, state]) => sum + state.checkCount, 0);
+  const elapsedMs = pollingStartTime ? Date.now() - pollingStartTime : 0;
+  const fixedTotal = Math.floor((elapsedMs / 10_000) * monitorCount);
+  const saved = fixedTotal - scopedChecks;
+
   return {
-    monitorCount:       monitorState.size,
-    totalAdaptiveChecks,
-    fixedTotalChecks:   fixedTotal,
+    monitorCount,
+    totalAdaptiveChecks: scopedChecks,
+    fixedTotalChecks: fixedTotal,
     savedPct: fixedTotal > 0 ? parseFloat(((saved / fixedTotal) * 100).toFixed(1)) : 0,
-    monitorIntervals: Object.fromEntries([...monitorState.entries()]
-      .filter(([id]) => {
-        if (userId === null || isAdmin) return true;
-        return getMonitorsForUser(userId, false).some((monitor) => monitor.id === id);
-      })
-      .map(([id, s]) => [id, s.currentIntervalMs])),
+    monitorIntervals: Object.fromEntries(
+      visibleEntries.map(([id, state]) => [id, state.currentIntervalMs])
+    ),
   };
 }
 

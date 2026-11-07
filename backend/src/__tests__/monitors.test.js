@@ -161,6 +161,26 @@ describe("Monitors API (/api/monitors)", () => {
     });
   });
 
+  describe("Concurrent monitor quota enforcement", () => {
+    test("does not allow parallel creates to exceed the per-user limit", async () => {
+      const previousLimit = process.env.MAX_MONITORS_PER_USER;
+      process.env.MAX_MONITORS_PER_USER = "1";
+      try {
+        const create = (name) => authA
+          .attach(request(app).post("/api/monitors"))
+          .send({ name, url: "https://example.com" });
+        const results = await Promise.all([create("quota-race-a"), create("quota-race-b")]);
+        expect(results.filter((result) => result.status === 201)).toHaveLength(1);
+        expect(results.filter((result) => result.status === 400)).toHaveLength(1);
+        const remaining = await pool.query("SELECT id FROM monitors WHERE user_id = $1", [userA.id]);
+        await Promise.all(remaining.rows.map((row) => pool.query("DELETE FROM monitors WHERE id = $1", [row.id])));
+      } finally {
+        if (previousLimit === undefined) delete process.env.MAX_MONITORS_PER_USER;
+        else process.env.MAX_MONITORS_PER_USER = previousLimit;
+      }
+    });
+  });
+
   describe("Validation Failures (Zod)", () => {
     test("rejects invalid URL format", async () => {
       const res = await authA

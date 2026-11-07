@@ -549,7 +549,8 @@ app.get("/api/history", requireAuth, async (req, res) => {
   try {
     return res.json({ monitorId, url: monitor.url, results: await getRecentMetrics(monitorId, n) });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[API] History query failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -567,7 +568,8 @@ app.get("/api/status", requireAuth, async (req, res) => {
       polling: getPollingState(req.user.sub, isAdmin),
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("[API] Status query failed:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 

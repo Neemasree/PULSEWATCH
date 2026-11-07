@@ -286,15 +286,14 @@ async function login(username, password) {
     Buffer.byteLength(password, "utf8") > 0 &&
     Buffer.byteLength(password, "utf8") <= 72;
 
-  // Do not reveal whether an account is locked. The same bcrypt work and
-  // generic response are used for locked, missing and invalid credentials.
+  // Query in the same order for locked, missing and valid accounts. The
+  // bcrypt work and API response stay identical so lock state is not an oracle.
+  const user = validUsername ? await findByUsername(cleanUsername) : null;
   const lockMsg = validUsername ? await checkLockout(cleanUsername) : null;
   if (lockMsg) {
     await bcrypt.compare("__invalid_login__", DUMMY_HASH);
     throw new Error("Invalid credentials");
   }
-
-  const user = validUsername ? await findByUsername(cleanUsername) : null;
   const hash = user && validPassword ? user.password_hash : DUMMY_HASH;
   const candidate = validPassword ? password : "__invalid_login__";
   const valid = await bcrypt.compare(candidate, hash);

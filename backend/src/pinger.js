@@ -29,7 +29,9 @@ async function pingUrl(url, options = {}) {
       headers: options.headers || undefined,
       data: options.body || undefined,
       timeout: options.timeoutMs || 5000,
-      maxRedirects: 3,
+      // Redirect targets can be IP literals and bypass DNS lookup callbacks.
+      // Require users to monitor the final URL directly instead.
+      maxRedirects: 0,
       // Bound both request and response bodies for every check, not only
       // keyword checks, so a monitored endpoint cannot exhaust backend memory.
       maxContentLength: 1024 * 1024,

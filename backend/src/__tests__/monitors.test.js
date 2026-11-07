@@ -255,6 +255,24 @@ describe("Monitors API (/api/monitors)", () => {
     });
   });
 
+  describe("Strict route identifier validation", () => {
+    test("rejects numeric prefixes and malformed IDs across monitor endpoints", async () => {
+      const endpoints = [
+        request(app).get("/api/monitors/12junk"),
+        request(app).get("/api/monitors/12junk/stats"),
+        request(app).get("/api/monitors/12junk/export.csv"),
+        request(app).get("/api/monitors/12junk/report.csv"),
+        request(app).patch("/api/monitors/12junk").send({ name: "Invalid ID" }),
+        request(app).delete("/api/monitors/12junk"),
+        request(app).post("/api/monitors/12junk/pause"),
+        request(app).post("/api/monitors/12junk/resume"),
+      ];
+      for (const endpoint of endpoints) {
+        await authA.attach(endpoint).expect(400);
+      }
+    });
+  });
+
   describe("Ownership Isolation", () => {
     let monitorBId;
 

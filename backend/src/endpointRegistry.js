@@ -13,7 +13,7 @@
  */
 
 const EventEmitter = require("events");
-const { getAllEnabledMonitors } = require("./db/monitors");
+const { getAllMonitors } = require("./db/monitors");
 
 const registry = new EventEmitter();
 
@@ -22,12 +22,13 @@ const _monitors = new Map();
 
 async function loadFromDb() {
   try {
-    // Load only enabled monitors into the active set on startup.
-    // Paused monitors are added lazily when the router calls notifyMonitorAdded.
-    const monitors = await getAllEnabledMonitors();
+    // Load all monitors so ownership-scoped history, stats and maintenance
+    // routes continue to work for paused monitors after a server restart.
+    // getActiveMonitors() filters enabled monitors for the poller.
+    const monitors = await getAllMonitors();
     _monitors.clear();
     for (const m of monitors) _monitors.set(m.id, m);
-    console.log(`[Registry] Loaded ${_monitors.size} enabled monitors from database.`);
+    console.log(`[Registry] Loaded ${_monitors.size} monitors from database.`);
   } catch (err) {
     console.error("[Registry] Failed to load monitors from DB:", err.message);
   }

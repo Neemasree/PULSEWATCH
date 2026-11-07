@@ -34,12 +34,13 @@ const path          = require("path");
 
 const {
   login, register, rotateRefreshToken, revokeRefreshToken,
-  bootstrapAdmin,
+  bootstrapAdmin, getFirstAdmin,
   requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
 } = require("./auth");
 
 const { getRecentMetrics } = require("./redisClient");
+const { seedDefaultMonitors } = require("./db/monitors");
 const { startPolling, onResult, getPollingState, getOngoingOutages, getMonitorsForUser } = require("./poller");
 const { loadFromDb, getPublicMonitors } = require("./endpointRegistry");
 const { runMigrations }         = require("../scripts/migrate");
@@ -604,8 +605,13 @@ onResult((result, anomaly) => {
 async function startServer() {
   try {
     await runMigrations();
-    const admin = await bootstrapAdmin();
-    if (admin) console.log(`[Auth] Bootstrapped admin account: ${admin.username}`);
+    const createdAdmin = await bootstrapAdmin();
+    if (createdAdmin) console.log(`[Auth] Bootstrapped admin account: ${createdAdmin.username}`);
+    const admin = createdAdmin || await getFirstAdmin();
+    if (admin) {
+      const seededCount = await seedDefaultMonitors(admin.id);
+      if (seededCount) console.log(`[Setup] Seeded ${seededCount} sample monitors for admin ${admin.username}`);
+    }
     await loadFromDb();
     httpServer.listen(PORT, () => {
       console.log(`[Server] PulseWatch on http://localhost:${PORT}`);

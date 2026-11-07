@@ -332,53 +332,69 @@ async function checkMonitor(monitorId) {
   }
 }
 
+// ─── Registry lifecycle handlers ─────────────────────────────────────────────
+
+function handleMonitorAdded(monitor, prevMonitor) {
+  if (monitorState.has(monitor.id)) {
+    const existing = monitorState.get(monitor.id);
+    const intervalChanged = prevMonitor &&
+      prevMonitor.interval_seconds !== monitor.interval_seconds;
+
+    if (intervalChanged) {
+      const newState = makeState(monitor, existing.downSince);
+      clearTimeout(existing.timeoutHandle);
+      monitorState.set(monitor.id, newState);
+      newState.timeoutHandle = setTimeout(() => {
+        newState.timeoutHandle = null;
+        checkMonitor(monitor.id);
+      }, 0);
+    } else {
+      existing.expectedStatus = monitor.expected_status ?? 200;
+      existing.failureThreshold = monitor.failure_threshold ?? existing.failureThreshold;
+    }
+    return;
+  }
+
+  console.log(`[Poller] Started monitoring: monitor ${monitor.id} (${monitor.url})`);
+  const state = makeState(monitor);
+  monitorState.set(monitor.id, state);
+  state.timeoutHandle = setTimeout(() => {
+    state.timeoutHandle = null;
+    checkMonitor(monitor.id);
+  }, 0);
+}
+
+function handleMonitorRemoved(monitor) {
+  const state = monitorState.get(monitor.id);
+  if (state?.timeoutHandle) clearTimeout(state.timeoutHandle);
+  monitorState.delete(monitor.id);
+  console.log(`[Poller] Stopped monitoring: monitor ${monitor.id} (${monitor.url})`);
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 function startPolling() {
+  // Make start idempotent: stale timers/listeners from a previous lifecycle
+  // must not create duplicate checks after a restart.
+  stopPolling();
   pollingStartTime = Date.now();
   totalAdaptiveChecks = 0;
   const monitors = getActiveMonitors();
   console.log(`[Poller] Starting adaptive polling for ${monitors.length} monitors`);
 
   monitors.forEach((m, i) => {
-    monitorState.set(m.id, makeState(m));
-    setTimeout(() => checkMonitor(m.id), i * 400);
+    const state = makeState(m);
+    monitorState.set(m.id, state);
+    state.timeoutHandle = setTimeout(() => {
+      state.timeoutHandle = null;
+      checkMonitor(m.id);
+    }, i * 400);
   });
 
-  // "added" carries (monitor, prevMonitor?)
-  registry.on("added", (monitor, prevMonitor) => {
-    if (monitorState.has(monitor.id)) {
-      // Already running — this is an edit. Decide whether to reset adaptive state.
-      const existing = monitorState.get(monitor.id);
-      const intervalChanged = prevMonitor &&
-        prevMonitor.interval_seconds !== monitor.interval_seconds;
-
-      if (intervalChanged) {
-        // New base interval — reset adaptive state, preserve downSince
-        const newState = makeState(monitor, existing.downSince);
-        clearTimeout(existing.timeoutHandle);
-        monitorState.set(monitor.id, newState);
-        setTimeout(() => checkMonitor(monitor.id), 0);
-      } else {
-        // Only metadata changed — update expectedStatus in-place, keep adaptive state
-        existing.expectedStatus = monitor.expected_status ?? 200;
-      }
-      return;
-    }
-
-    console.log(`[Poller] Started monitoring: monitor ${monitor.id} (${monitor.url})`);
-    monitorState.set(monitor.id, makeState(monitor));
-    setTimeout(() => checkMonitor(monitor.id), 0);
-  });
-
-  registry.on("removed", (monitor) => {
-    const state = monitorState.get(monitor.id);
-    if (state?.timeoutHandle) clearTimeout(state.timeoutHandle);
-    // Preserve downSince in case monitor is re-added (resume after pause)
-    // by keeping the entry briefly — but we must delete it to stop polling.
-    monitorState.delete(monitor.id);
-    console.log(`[Poller] Stopped monitoring: monitor ${monitor.id} (${monitor.url})`);
-  });
+  registry.off("added", handleMonitorAdded);
+  registry.off("removed", handleMonitorRemoved);
+  registry.on("added", handleMonitorAdded);
+  registry.on("removed", handleMonitorRemoved);
 
   if (comparisonTimer) clearInterval(comparisonTimer);
   comparisonTimer = setInterval(logComparisonStats, 5 * 60 * 1000);
@@ -391,6 +407,8 @@ function startPolling() {
 }
 
 function stopPolling() {
+  registry.off("added", handleMonitorAdded);
+  registry.off("removed", handleMonitorRemoved);
   if (comparisonTimer) {
     clearInterval(comparisonTimer);
     comparisonTimer = null;
@@ -403,6 +421,8 @@ function stopPolling() {
     if (s.timeoutHandle) clearTimeout(s.timeoutHandle);
   }
   monitorState.clear();
+  pollingStartTime = null;
+  totalAdaptiveChecks = 0;
 }
 
 function logComparisonStats() {

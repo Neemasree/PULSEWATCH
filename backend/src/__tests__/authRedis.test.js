@@ -10,6 +10,7 @@ const { client: redisClient } = require("../redisClient");
 const {
   blacklist,
   isBlacklisted,
+  consumeRefreshToken,
   checkLockout,
   recordFailure,
   clearFailures,
@@ -17,12 +18,14 @@ const {
 
 describe("Redis-backed Auth State", () => {
   const testJti = `test-jti-${Date.now()}`;
+  const concurrentJti = `test-concurrent-jti-${Date.now()}`;
   const testUser = `lockout_user_${Date.now()}`;
 
   afterAll(async () => {
     // Cleanup Redis keys
     await redisClient.del(
       `auth:blacklist:${testJti}`,
+      `auth:blacklist:${concurrentJti}`,
       `auth:fails:${testUser}`,
       `auth:lockout:${testUser}`
     );
@@ -56,6 +59,20 @@ describe("Redis-backed Auth State", () => {
     test("unblacklisted JTI returns false", async () => {
       const isNot = await isBlacklisted("non-existent-jti-xyz");
       expect(isNot).toBe(false);
+    });
+
+    test("concurrent refresh attempts can consume a JTI only once", async () => {
+      const expMs = Date.now() + 10 * 60 * 1000;
+      const attempts = await Promise.allSettled([
+        consumeRefreshToken(concurrentJti, expMs),
+        consumeRefreshToken(concurrentJti, expMs),
+      ]);
+
+      expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+      expect(attempts.filter((attempt) => attempt.status === "rejected")).toHaveLength(1);
+      expect(attempts.find((attempt) => attempt.status === "rejected").reason.message)
+        .toMatch(/already used/i);
+      expect(await isBlacklisted(concurrentJti)).toBe(true);
     });
   });
 

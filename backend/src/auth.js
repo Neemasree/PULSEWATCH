@@ -135,6 +135,13 @@ async function createUser(username, passwordHash, role, name) {
  * The advisory lock prevents duplicate bootstrap admins if two processes
  * start against the same empty database.
  */
+async function getFirstAdmin() {
+  const { rows } = await pool.query(
+    "SELECT id, username, role, name FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1"
+  );
+  return rows[0] ?? null;
+}
+
 async function bootstrapAdmin(customPool = pool) {
   const username = process.env.ADMIN_USERNAME?.trim();
   const password = process.env.ADMIN_PASSWORD;
@@ -516,7 +523,7 @@ function clearAuthCookies(res) {
 
 module.exports = {
   login, register, rotateRefreshToken, revokeRefreshToken,
-  bootstrapAdmin,
+  bootstrapAdmin, getFirstAdmin,
   verifyAccessToken, requireAuth, requireRole, csrfProtect,
   setAuthCookies, clearAuthCookies,
   blacklist, isBlacklisted, consumeRefreshToken, checkLockout, recordFailure, clearFailures,

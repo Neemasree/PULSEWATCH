@@ -13,7 +13,7 @@
  */
 
 const EventEmitter = require("events");
-const { getAllMonitors } = require("./db/monitors");
+const { getAllMonitors: getAllMonitorsFromDb } = require("./db/monitors");
 
 const registry = new EventEmitter();
 
@@ -25,7 +25,7 @@ async function loadFromDb() {
     // Load all monitors so ownership-scoped history, stats and maintenance
     // routes continue to work for paused monitors after a server restart.
     // getActiveMonitors() filters enabled monitors for the poller.
-    const monitors = await getAllMonitors();
+    const monitors = await getAllMonitorsFromDb();
     _monitors.clear();
     for (const m of monitors) _monitors.set(m.id, m);
     console.log(`[Registry] Loaded ${_monitors.size} monitors from database.`);

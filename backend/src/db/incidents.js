@@ -59,6 +59,18 @@ async function openIncident({ monitorId, startedAt }) {
   }
 }
 
+/** Returns the active incident for a monitor, if one survived a restart. */
+async function getOpenIncidentForMonitor(monitorId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM incidents
+     WHERE monitor_id = $1 AND status IN ('OPEN', 'ACKNOWLEDGED')
+     ORDER BY started_at ASC
+     LIMIT 1`,
+    [monitorId]
+  );
+  return rows[0] ?? null;
+}
+
 /**
  * Resolves an open incident by ID.
  * Sets status = 'RESOLVED', resolved_at, and duration_ms.
@@ -248,6 +260,7 @@ async function getIncidentEvents({ incidentId, userId, isAdmin }) {
 
 module.exports = {
   openIncident,
+  getOpenIncidentForMonitor,
   resolveIncident,
   acknowledgeIncident,
   getIncidentsByMonitor,

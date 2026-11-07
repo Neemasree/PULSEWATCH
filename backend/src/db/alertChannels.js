@@ -35,12 +35,38 @@ async function countChannels(userId) {
 }
 
 async function createChannel(data) {
-  const { rows } = await pool.query(
-    `INSERT INTO alert_channels (user_id, type, name, target_url, enabled, events)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [data.userId, data.type, data.name, data.target_url ?? data.targetUrl, data.enabled, JSON.stringify(data.events)]
-  );
-  return safeChannel(rows[0]);
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    // Serialize creates for one owner so concurrent requests cannot bypass
+    // the per-user channel quota.
+    await db.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+      ["pulsewatch:alert-channel-limit", String(data.userId)]
+    );
+    const count = await db.query(
+      "SELECT COUNT(*)::int AS count FROM alert_channels WHERE user_id = $1",
+      [data.userId]
+    );
+    if (count.rows[0].count >= 10) {
+      const error = new Error("Maximum of 10 alert channels reached");
+      error.code = "CHANNEL_LIMIT_REACHED";
+      throw error;
+    }
+
+    const { rows } = await db.query(
+      `INSERT INTO alert_channels (user_id, type, name, target_url, enabled, events)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [data.userId, data.type, data.name, data.target_url ?? data.targetUrl, data.enabled, JSON.stringify(data.events)]
+    );
+    await db.query("COMMIT");
+    return safeChannel(rows[0]);
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
 }
 
 async function deleteChannel(id, userId, isAdmin) {

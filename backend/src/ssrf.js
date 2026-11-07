@@ -136,8 +136,12 @@ async function validateUrlSafety(urlString) {
   // DNS resolution check
   try {
     const records = await dns.promises.lookup(cleanHost, { all: true });
+    // A successful lookup with no addresses is not a safe destination.
+    if (!Array.isArray(records) || records.length === 0) {
+      throw new Error(`Hostname could not be resolved: ${cleanHost}`);
+    }
     for (const record of records) {
-      if (isPrivateIp(record.address)) {
+      if (!record || !record.address || isPrivateIp(record.address)) {
         throw new Error(
           `URL hostname resolves to private IP (${record.address}) - SSRF prohibited`
         );
@@ -163,7 +167,12 @@ async function validateUrlSafety(urlString) {
 function safeLookup(hostname, options, callback) {
   dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
     if (err) return callback(err);
-    const records = Array.isArray(addresses) ? addresses : [addresses];
+    const records = Array.isArray(addresses) ? addresses : (addresses ? [addresses] : []);
+    if (records.length === 0 || records.some((record) => !record || !record.address)) {
+      const error = new Error(`Hostname resolved to no usable addresses (${hostname})`);
+      error.code = "ERR_DNS_EMPTY_RESULT";
+      return callback(error);
+    }
     const unsafe = records.find((record) => isPrivateIp(record.address));
     if (unsafe) {
       const error = new Error(`Hostname resolved to private IP (${unsafe.address})`);

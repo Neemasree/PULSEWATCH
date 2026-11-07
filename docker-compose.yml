@@ -76,7 +76,7 @@ services:
       DATABASE_URL: postgresql://pulsewatch:devpassword@postgres:5432/pulsewatch
       DATABASE_SSL: "false"
       ALLOWED_ORIGIN: "http://localhost:8080"
-        depends_on:
+    depends_on:
       redis:
         condition: service_healthy   # wait for Redis healthcheck to pass before starting
       postgres:

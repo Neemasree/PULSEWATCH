@@ -214,6 +214,53 @@ async function resumeMonitor(id, userId, isAdmin = false) {
   return updateMonitor(id, userId, isAdmin, { enabled: true });
 }
 
+/**
+ * Adds the sample public monitors to a brand-new admin account only.
+ * Safe to call on every startup: it never overwrites an existing monitor list.
+ */
+async function seedDefaultMonitors(userId) {
+  const samples = [
+    ["Google", "https://www.google.com"],
+    ["GitHub", "https://www.github.com"],
+    ["Cloudflare", "https://www.cloudflare.com"],
+    ["HTTPBin", "https://httpbin.org/get"],
+    ["JSONPlaceholder", "https://jsonplaceholder.typicode.com/posts/1"],
+  ];
+
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+      ["pulsewatch:default-monitors", String(userId)]
+    );
+    const existing = await db.query(
+      "SELECT COUNT(*)::int AS count FROM monitors WHERE user_id = $1",
+      [userId]
+    );
+    if (existing.rows[0].count > 0) {
+      await db.query("COMMIT");
+      return 0;
+    }
+
+    for (const [name, url] of samples) {
+      await db.query(
+        `INSERT INTO monitors
+           (user_id, name, url, interval_seconds, expected_status, enabled, is_public)
+         VALUES ($1, $2, $3, 10, 200, true, true)`,
+        [userId, name, url]
+      );
+    }
+    await db.query("COMMIT");
+    return samples.length;
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
+}
+
 /** Retrieves all monitors, including paused ones, for ownership/cache state. */
 async function getAllMonitors() {
   const { rows } = await pool.query("SELECT * FROM monitors ORDER BY id ASC");
@@ -251,5 +298,6 @@ module.exports = {
   getAllEnabledMonitors,
   getAllMonitors,
   getPublicEnabledMonitors,
+  seedDefaultMonitors,
   getMaxMonitorsPerUser,
 };

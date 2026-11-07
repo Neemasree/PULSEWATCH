@@ -364,6 +364,38 @@ function handleMonitorAdded(monitor, prevMonitor) {
   }, 0);
 }
 
+function handleMonitorUpdated(monitor, prevMonitor) {
+  const existing = monitorState.get(monitor.id);
+  if (!existing) {
+    handleMonitorAdded(monitor, prevMonitor);
+    return;
+  }
+
+  const intervalChanged = prevMonitor &&
+    prevMonitor.interval_seconds !== monitor.interval_seconds;
+  const urlChanged = prevMonitor && prevMonitor.url !== monitor.url;
+  const newBase = baseInterval(monitor);
+
+  if (existing.timeoutHandle) clearTimeout(existing.timeoutHandle);
+  const nextState = {
+    ...existing,
+    baseIntervalMs: newBase,
+    currentIntervalMs: intervalChanged ? newBase : Math.min(existing.currentIntervalMs, maxInterval(newBase)),
+    expectedStatus: monitor.expected_status ?? 200,
+    failureThreshold: monitor.failure_threshold ?? existing.failureThreshold,
+    // A changed target must build a fresh latency baseline.
+    readings: urlChanged ? [] : existing.readings,
+    lastStatus: urlChanged ? null : existing.lastStatus,
+    timeoutHandle: null,
+    checkInFlight: false,
+  };
+  monitorState.set(monitor.id, nextState);
+  nextState.timeoutHandle = setTimeout(() => {
+    nextState.timeoutHandle = null;
+    checkMonitor(monitor.id);
+  }, 0);
+}
+
 function handleMonitorRemoved(monitor) {
   const state = monitorState.get(monitor.id);
   if (state?.timeoutHandle) clearTimeout(state.timeoutHandle);
@@ -393,8 +425,10 @@ function startPolling() {
 
   registry.off("added", handleMonitorAdded);
   registry.off("removed", handleMonitorRemoved);
+  registry.off("updated", handleMonitorUpdated);
   registry.on("added", handleMonitorAdded);
   registry.on("removed", handleMonitorRemoved);
+  registry.on("updated", handleMonitorUpdated);
 
   if (comparisonTimer) clearInterval(comparisonTimer);
   comparisonTimer = setInterval(logComparisonStats, 5 * 60 * 1000);
@@ -409,6 +443,7 @@ function startPolling() {
 function stopPolling() {
   registry.off("added", handleMonitorAdded);
   registry.off("removed", handleMonitorRemoved);
+  registry.off("updated", handleMonitorUpdated);
   if (comparisonTimer) {
     clearInterval(comparisonTimer);
     comparisonTimer = null;

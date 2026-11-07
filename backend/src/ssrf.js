@@ -94,19 +94,19 @@ function isPrivateIpv6(ip) {
   // Deprecated IPv4-compatible form and other ::/96 special addresses.
   if ((address >> 32n) === 0n) return true;
   if (ipv6HasPrefix(address, 0xff, 8)) return true; // multicast
-  if (ipv6HasPrefix(address, 0xfc, 7)) return true; // unique-local
+  if (ipv6HasPrefix(address, 0x7e, 7)) return true; // unique-local
   if (ipv6HasPrefix(address, 0x3fa, 10)) return true; // link-local fe80::/10
 
   // Global unicast allocation is 2000::/3. Reject all other address classes,
   // including NAT64, discard-only, site-local and reserved ranges.
-  if (!ipv6HasPrefix(address, 0x2000, 3)) return true;
+  if (!ipv6HasPrefix(address, 0x1, 3)) return true;
 
   // Special-purpose ranges inside global-unicast space, including IETF
   // protocol assignments, documentation, benchmarking, Teredo and 6to4.
-  if (ipv6HasPrefix(address, 0x2001, 23)) return true; // 2001::/23
+  if (ipv6HasPrefix(address, 0x100080, 23)) return true; // 2001::/23
   if (ipv6HasPrefix(address, 0x20010db8, 32)) return true; // documentation
-  if (ipv6HasPrefix(address, 0x20020000, 16)) return true; // 6to4
-  if (ipv6HasPrefix(address, 0x3fff0000, 20)) return true; // documentation
+  if (ipv6HasPrefix(address, 0x2002, 16)) return true; // 6to4
+  if (ipv6HasPrefix(address, 0x3fff0, 20)) return true; // documentation
 
   return false;
 }

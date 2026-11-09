@@ -21,7 +21,7 @@ services:
     container_name: pulsewatch-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"                  # expose locally so you can inspect with redis-cli
+      - "127.0.0.1:6379:6379"        # local-only access for redis-cli
     volumes:
       - redis-data:/data             # persist sorted sets across container restarts
     healthcheck:
@@ -38,7 +38,7 @@ services:
     container_name: pulsewatch-postgres
     restart: unless-stopped
     ports:
-      - "15432:5432"                 # avoid conflicts with a host PostgreSQL service
+      - "127.0.0.1:15432:5432"       # local-only; avoid host Postgres conflicts
     environment:
       POSTGRES_USER: pulsewatch
       POSTGRES_PASSWORD: devpassword
@@ -66,7 +66,7 @@ services:
       - 1.1.1.1
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       # Environment variables keep secrets out of the image and let you
       # change config (e.g. Redis host, Slack URL) without rebuilding.
@@ -101,7 +101,7 @@ services:
     container_name: pulsewatch-frontend
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       - backend
     networks:

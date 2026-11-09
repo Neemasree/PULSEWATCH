@@ -161,6 +161,9 @@ async function performMonitorCheck(monitorId) {
     console.error(`[Maintenance] ${err.message}`);
     return null;
   });
+  // A pause, delete or edit may happen while the maintenance query is pending.
+  // Discard this result before it changes metrics, incidents or notifications.
+  if (monitorState.get(monitorId) !== state) return;
   if (maintenance) result.maintenance = true;
 
   state.checkCount++;
@@ -181,6 +184,7 @@ async function performMonitorCheck(monitorId) {
   await storeMetric(monitorId, result).catch((err) =>
     console.error(`[Storage] ${err.message}`)
   );
+  if (monitorState.get(monitorId) !== state) return;
   if (!maintenance) {
     upsertCheckRollup(monitorId, result).catch((err) =>
       console.error(`[Rollup] ${err.message}`)
@@ -356,6 +360,7 @@ function handleMonitorAdded(monitor, prevMonitor) {
   }
 
   console.log(`[Poller] Started monitoring: monitor ${monitor.id} (${monitor.url})`);
+  checkSsl(monitor);
   const state = makeState(monitor);
   monitorState.set(monitor.id, state);
   state.timeoutHandle = setTimeout(() => {
@@ -371,6 +376,7 @@ function handleMonitorUpdated(monitor, prevMonitor) {
     return;
   }
 
+  checkSsl(monitor);
   const intervalChanged = prevMonitor &&
     prevMonitor.interval_seconds !== monitor.interval_seconds;
   const urlChanged = prevMonitor && prevMonitor.url !== monitor.url;

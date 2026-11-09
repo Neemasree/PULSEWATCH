@@ -360,9 +360,9 @@ function handleMonitorAdded(monitor, prevMonitor) {
   }
 
   console.log(`[Poller] Started monitoring: monitor ${monitor.id} (${monitor.url})`);
-  checkSsl(monitor);
   const state = makeState(monitor);
   monitorState.set(monitor.id, state);
+  checkSsl(monitor);
   state.timeoutHandle = setTimeout(() => {
     state.timeoutHandle = null;
     checkMonitor(monitor.id);
@@ -376,7 +376,6 @@ function handleMonitorUpdated(monitor, prevMonitor) {
     return;
   }
 
-  checkSsl(monitor);
   const intervalChanged = prevMonitor &&
     prevMonitor.interval_seconds !== monitor.interval_seconds;
   const urlChanged = prevMonitor && prevMonitor.url !== monitor.url;
@@ -396,6 +395,7 @@ function handleMonitorUpdated(monitor, prevMonitor) {
     checkInFlight: false,
   };
   monitorState.set(monitor.id, nextState);
+  checkSsl(monitor);
   nextState.timeoutHandle = setTimeout(() => {
     nextState.timeoutHandle = null;
     checkMonitor(monitor.id);

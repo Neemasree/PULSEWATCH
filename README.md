@@ -6,10 +6,12 @@
 
 Adaptive polling · Z-score anomaly detection · Incident lifecycle · SSL & maintenance controls · Multi-channel alerts
 
+[Placement demo & interview walkthrough](docs/PLACEMENT_DEMO.md)
+
 <br/>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Neemasree/PULSEWATCH/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Neemasree/PULSEWATCH/actions)
-[![Tests](https://img.shields.io/badge/tests-verified_in_CI-22c55e?style=for-the-badge&logo=jest&logoColor=white)](#-testing--ci)
+[![Tests](https://img.shields.io/badge/tests-Jest_%2B_Playwright-C21325?style=for-the-badge&logo=jest&logoColor=white)](#-testing--ci)
 
 ![React](https://img.shields.io/badge/React_18-20232A?style=flat-square&logo=react&logoColor=61DAFB)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white)
@@ -313,7 +315,13 @@ node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
 
 ```bash
 # backend (needs PostgreSQL and Redis running)
-cd backend && npm install && npm run migrate && npm run dev
+cd backend
+cp .env.example .env
+# keep ALLOWED_ORIGIN=http://localhost:5173,http://localhost:8080 for local use
+# set JWT secrets and ADMIN_USERNAME / ADMIN_PASSWORD
+npm ci
+npm run migrate
+npm run dev
 
 # frontend
 cd frontend && npm install && npm run dev
@@ -360,9 +368,15 @@ OpenAPI docs are served at `/api/docs` (open in development, admin-only in produ
 | Public | `GET /api/public/status`, `GET /api/public/incidents` |
 | Health | `GET /health`, `GET /api/health` |
 
-**Socket.io events (server to client):** `history`, `metric-update`, `polling-stats`, `incident-update`. Each is sent only to the owning user's room (and admins).
+**Socket.io events (server to client):** `initial-data`, `metric-update`, `polling-stats`, `incident-update`, and `monitors-updated`. User data updates are sent to the owning user's room; admin-wide updates are sent to the admin room.
 
 </details>
+
+---
+
+## 🎤 Placement demo
+
+See [docs/PLACEMENT_DEMO.md](docs/PLACEMENT_DEMO.md) for a 3–5 minute product walkthrough, local run commands, architecture talking points, trade-offs and interview questions.
 
 ---
 

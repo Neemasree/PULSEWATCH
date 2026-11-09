@@ -8,14 +8,14 @@ jest.mock("../db/incidents", () => ({
   getOpenIncidentForMonitor: jest.fn(),
   resolveIncident: jest.fn(),
 }));
-jest.mock("../anomalyDetector", () => ({ detectAnomaly: jest.fn() }));
+jest.mock("../anomalyDetector", () => ({ detectAnomaly: jest.fn(() => ({ isAnomaly: false, zScore: null })) }));
 jest.mock("../db/rollups", () => ({
   upsertCheckRollup: jest.fn(),
   deleteOldRollups: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock("../db/maintenance", () => ({ getActiveMaintenance: jest.fn() }));
+jest.mock("../db/maintenance", () => ({ getActiveMaintenance: jest.fn().mockResolvedValue(null) }));
 jest.mock("../notifier", () => ({ notify: jest.fn() }));
-jest.mock("../sslChecker", () => ({ inspectCertificate: jest.fn() }));
+jest.mock("../sslChecker", () => ({ inspectCertificate: jest.fn().mockResolvedValue({ sslExpiresAt: "2027-01-01T00:00:00.000Z", sslDaysLeft: 30 }) }));
 jest.mock("../endpointRegistry", () => {
   const EventEmitter = require("events");
   return {
@@ -26,7 +26,12 @@ jest.mock("../endpointRegistry", () => {
 });
 
 const poller = require("../poller");
-const { registry } = require("../endpointRegistry");
+const { registry, getActiveMonitors } = require("../endpointRegistry");
+const { pingUrl } = require("../pinger");
+const { storeMetric } = require("../redisClient");
+const { getOpenIncidentForMonitor } = require("../db/incidents");
+const { getActiveMaintenance } = require("../db/maintenance");
+const { inspectCertificate } = require("../sslChecker");
 
 describe("poller lifecycle", () => {
   afterEach(() => {
@@ -62,6 +67,71 @@ describe("poller lifecycle", () => {
     registry.emit("added", monitor);
     expect(poller._monitorState.has(monitor.id)).toBe(true);
     expect(registry.listenerCount("added")).toBe(1);
+  });
+
+  test("runs the first SSL inspection as soon as an HTTPS monitor is added", () => {
+    poller.startPolling();
+    const monitor = {
+      id: 9084,
+      user_id: 19,
+      name: "SSL first-check test",
+      url: "https://ssl-first-check.example.com",
+      interval_seconds: 10,
+      enabled: true,
+      expected_status: 200,
+      check_ssl: true,
+    };
+
+    registry.emit("added", monitor);
+
+    expect(poller._monitorState.has(monitor.id)).toBe(true);
+    expect(inspectCertificate).toHaveBeenCalledWith(monitor.url);
+  });
+
+  test("discards a check when a monitor is edited during the maintenance lookup", async () => {
+    const monitor = {
+      id: 9085,
+      user_id: 19,
+      name: "Stale check test",
+      url: "https://stale-check.example.com",
+      interval_seconds: 10,
+      enabled: true,
+      expected_status: 200,
+      check_ssl: false,
+    };
+    getActiveMonitors.mockReturnValue([monitor]);
+    getOpenIncidentForMonitor.mockResolvedValue(null);
+    pingUrl.mockResolvedValue({
+      httpStatus: 200,
+      responseTime: 20,
+      timestamp: new Date().toISOString(),
+      failureReason: null,
+    });
+
+    let releaseMaintenance;
+    getActiveMaintenance.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseMaintenance = resolve;
+    }));
+
+    poller.startPolling();
+    const initialState = poller._monitorState.get(monitor.id);
+    if (initialState?.timeoutHandle) clearTimeout(initialState.timeoutHandle);
+    if (initialState) initialState.timeoutHandle = null;
+
+    const onResult = jest.fn();
+    poller.onResult(onResult);
+    const pendingCheck = poller._checkMonitor(monitor.id);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(releaseMaintenance).toBeDefined();
+
+    const updated = { ...monitor, interval_seconds: 20, name: "Edited while checking" };
+    registry.emit("updated", updated, monitor);
+    releaseMaintenance(null);
+    await pendingCheck;
+
+    expect(storeMetric).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+    expect(poller._monitorState.get(monitor.id)).not.toBe(initialState);
   });
 
   test("editing a monitor replaces stale configuration without losing durable state", () => {

@@ -133,9 +133,12 @@ if (openapiDocument) {
   });
 }
 const docsMiddleware = IS_PROD ? [requireAuth, requireRole("admin")] : [];
-app.use("/api/docs", ...docsMiddleware, swaggerUi.serve, swaggerUi.setup({
-  openapi: "3.0.3",
-  info: { title: "PulseWatch API", version: "1.0.0" },
+app.use("/api/docs", ...docsMiddleware, swaggerUi.serve, swaggerUi.setup(null, {
+  swaggerOptions: {
+    // Load the version-controlled OpenAPI document served by the route above.
+    url: "/api/docs/openapi.yaml",
+    persistAuthorization: true,
+  },
 }));
 
 // ─── Auth routes (public — no requireAuth) ────────────────────────────────────

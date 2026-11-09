@@ -65,9 +65,11 @@ function parsePositiveId(raw) {
 // ─── Express app ──────────────────────────────────────────────────────────────
 const app = express();
 const rawTrustProxy = process.env.TRUST_PROXY;
-const trustProxy = rawTrustProxy === undefined
-  ? (IS_PROD ? 1 : false)
-  : (rawTrustProxy === "false" ? false : (isNaN(Number(rawTrustProxy)) ? rawTrustProxy : Number(rawTrustProxy)));
+// Never trust forwarded client IP headers implicitly. Operators must set
+// TRUST_PROXY to the actual proxy hop count or trusted subnet when deployed.
+const trustProxy = rawTrustProxy === undefined || rawTrustProxy === "false"
+  ? false
+  : (isNaN(Number(rawTrustProxy)) ? rawTrustProxy : Number(rawTrustProxy));
 app.set("trust proxy", trustProxy);
 
 // 1. Security headers

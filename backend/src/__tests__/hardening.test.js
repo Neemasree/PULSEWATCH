@@ -99,6 +99,10 @@ describe("security hardening", () => {
     expect(response.body.error).toMatch(/1 MB limit/i);
   });
 
+  test("does not trust forwarded IP headers unless an operator configures a proxy", () => {
+    expect(app.get("trust proxy")).toBe(false);
+  });
+
   test("removed debug and arbitrary-check routes return 404", async () => {
     expect((await request(app).get("/api/debug/cors")).status).toBe(404);
     expect((await request(app).get("/api/check?url=https://example.com")).status).toBe(404);

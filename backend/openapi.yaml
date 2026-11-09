@@ -139,7 +139,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/MonitorInput' }
+            schema: { $ref: '#/components/schemas/MonitorUpdate' }
       responses:
         '200': { description: Updated monitor }
         '400': { description: Invalid fields or unsafe destination }
@@ -484,3 +484,21 @@ components:
         timeout_ms: { type: integer, minimum: 1000, maximum: 30000, default: 5000 }
         failure_threshold: { type: integer, minimum: 1, maximum: 10, default: 2 }
         check_ssl: { type: boolean, default: true }
+    MonitorUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        url: { type: string, format: uri, description: HTTP or HTTPS URL; destination must resolve to public IP addresses }
+        interval_seconds: { type: integer, minimum: 5, maximum: 3600 }
+        expected_status: { type: integer, minimum: 100, maximum: 599 }
+        is_public: { type: boolean }
+        enabled: { type: boolean }
+        method: { type: string, enum: [GET, HEAD, POST] }
+        request_headers: { type: object, additionalProperties: { type: string }, description: Up to 50 validated request headers }
+        request_body: { type: string, maxLength: 1048576, nullable: true }
+        keyword: { type: string, maxLength: 500, nullable: true }
+        keyword_mode: { type: string, enum: [present, absent] }
+        timeout_ms: { type: integer, minimum: 1000, maximum: 30000 }
+        failure_threshold: { type: integer, minimum: 1, maximum: 10 }
+        check_ssl: { type: boolean }

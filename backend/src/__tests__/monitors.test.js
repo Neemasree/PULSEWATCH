@@ -234,7 +234,7 @@ describe("Monitors API (/api/monitors)", () => {
       ["content length override", { "Content-Length": "0" }],
       ["hop-by-hop connection header", { Connection: "keep-alive" }],
       ["proxy authorization", { "Proxy-Authorization": "Basic dGVzdA==" }],
-      ["header injection", { "X-Test": "safe\\r\\nX-Injected: yes" }],
+      ["header injection", { "X-Test": "safe\r\nX-Injected: yes" }],
       ["oversized value", { "X-Test": "x".repeat(8193) }],
     ])("rejects %s before storing a monitor", async (_label, headers) => {
       const response = await authA

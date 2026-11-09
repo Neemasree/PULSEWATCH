@@ -131,7 +131,7 @@ const updateMonitorSchema = z
     enabled: z.boolean().optional(),
     method: z.enum(["GET", "HEAD", "POST"]).optional(),
     request_headers: requestHeadersSchema.nullable().optional(),
-    requestHeaders: z.record(z.string(), z.string()).nullable().optional(),
+    requestHeaders: requestHeadersSchema.nullable().optional(),
     request_body: z.string().max(1024 * 1024).nullable().optional(),
     requestBody: z.string().max(1024 * 1024).nullable().optional(),
     keyword: z.string().max(500).nullable().optional(),

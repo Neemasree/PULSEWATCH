@@ -2,40 +2,485 @@ openapi: 3.0.3
 info:
   title: PulseWatch API
   version: 1.0.0
-  description: Cookie-authenticated uptime monitoring API.
+  description: |
+    Cookie-authenticated uptime monitoring API. Browser mutations require the
+    csrf_token cookie value in the X-CSRF-Token header. Regular users can access
+    only their own monitors, incidents and alert channels; admins can access all.
 servers:
-  - url: /
+  - url: /api
+tags:
+  - name: Authentication
+  - name: Monitors
+  - name: Status
+  - name: Incidents
+  - name: Maintenance
+  - name: Alert channels
 paths:
-  /api/health: { get: { responses: { "200": { description: OK } } } }
-  /api/auth/login: { post: { responses: { "200": { description: Authenticated } } } }
-  /api/auth/register: { post: { responses: { "201": { description: Registered } } } }
-  /api/auth/refresh: { post: { responses: { "200": { description: Refreshed } } } }
-  /api/auth/logout: { post: { responses: { "200": { description: Logged out } } } }
-  /api/auth/me: { get: { responses: { "200": { description: Current user } } } }
-  /api/public/status: { get: { responses: { "200": { description: Public status } } } }
-  /api/public/incidents: { get: { responses: { "200": { description: Public incidents } } } }
-  /api/monitors:
-    get: { responses: { "200": { description: Owned monitors } } }
-    post: { responses: { "201": { description: Monitor created } } }
-  /api/monitors/{id}:
-    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
-    get: { responses: { "200": { description: Monitor } } }
-    patch: { responses: { "200": { description: Monitor updated } } }
-    delete: { responses: { "200": { description: Monitor deleted } } }
-  /api/monitors/{id}/stats: { get: { responses: { "200": { description: Monitor statistics } } } }
-  /api/monitors/{id}/export.csv: { get: { responses: { "200": { description: Check CSV } } } }
-  /api/monitors/{id}/report.csv: { get: { responses: { "200": { description: Rollup CSV } } } }
-  /api/monitors/{id}/maintenance:
-    get: { responses: { "200": { description: Maintenance windows } } }
-    post: { responses: { "201": { description: Maintenance window created } } }
-  /api/maintenance/{id}: { delete: { responses: { "200": { description: Deleted } } } }
-  /api/incidents: { get: { responses: { "200": { description: Incidents } } } }
-  /api/incidents/{id}/acknowledge: { post: { responses: { "200": { description: Acknowledged } } } }
-  /api/alert-channels:
-    get: { responses: { "200": { description: Alert channels } } }
-    post: { responses: { "201": { description: Alert channel created } } }
-  /api/alert-channels/{id}:
-    patch: { responses: { "200": { description: Updated } } }
-    delete: { responses: { "200": { description: Deleted } } }
-  /api/alert-channels/{id}/test: { post: { responses: { "200": { description: Delivery result } } } }
-  /api/alert-channels/{id}/deliveries: { get: { responses: { "200": { description: Delivery log } } } }
+  /health:
+    get:
+      tags: [Status]
+      summary: Health check
+      security: []
+      responses:
+        '200': { description: API is healthy }
+  /auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register a guest account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, name]
+              properties:
+                username: { type: string, minLength: 3, maxLength: 20 }
+                password: { type: string, minLength: 8, description: Must contain a letter and number; maximum 72 UTF-8 bytes }
+                name: { type: string, minLength: 2, maxLength: 40 }
+      responses:
+        '201': { description: Account created; auth cookies set }
+        '400': { description: Invalid registration details }
+        '429': { description: Rate limit exceeded }
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: Authenticate and create a session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        '200': { description: Authenticated; access and refresh cookies set }
+        '401': { description: Invalid credentials }
+        '429': { description: Rate limit exceeded }
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Rotate a refresh token
+      security:
+        - refreshCookie: []
+          csrfToken: []
+      responses:
+        '200': { description: New access and refresh cookies set }
+        '401': { description: Missing, expired or already-used refresh token }
+        '403': { description: CSRF validation failed }
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke the refresh token and clear cookies
+      security:
+        - refreshCookie: []
+          csrfToken: []
+      responses:
+        '200': { description: Session cookies cleared }
+        '403': { description: CSRF validation failed }
+  /auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get the current user
+      responses:
+        '200': { description: Current authenticated user }
+        '401': { description: Authentication required }
+  /monitors:
+    get:
+      tags: [Monitors]
+      summary: List monitors visible to the current user
+      responses:
+        '200':
+          description: Monitor collection
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  monitors:
+                    type: array
+                    items: { $ref: '#/components/schemas/Monitor' }
+    post:
+      tags: [Monitors]
+      summary: Create an HTTP monitor
+      security:
+        - accessCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MonitorInput' }
+      responses:
+        '201': { description: Monitor created }
+        '400': { description: Validation or SSRF rejection }
+        '403': { description: CSRF validation failed }
+  /monitors/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MonitorId'
+    get:
+      tags: [Monitors]
+      summary: Get a monitor
+      responses:
+        '200': { description: Monitor details }
+        '404': { description: Monitor not found or not visible }
+    patch:
+      tags: [Monitors]
+      summary: Update monitor configuration
+      security:
+        - accessCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MonitorInput' }
+      responses:
+        '200': { description: Updated monitor }
+        '400': { description: Invalid fields or unsafe destination }
+        '404': { description: Monitor not found or not visible }
+    delete:
+      tags: [Monitors]
+      summary: Delete a monitor
+      security:
+        - accessCookie: []
+          csrfToken: []
+      responses:
+        '200': { description: Monitor deleted }
+        '404': { description: Monitor not found or not visible }
+  /monitors/{id}/pause:
+    post:
+      tags: [Monitors]
+      summary: Pause a monitor
+      security:
+        - accessCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/MonitorId'
+      responses:
+        '200': { description: Monitor paused }
+  /monitors/{id}/resume:
+    post:
+      tags: [Monitors]
+      summary: Resume a monitor
+      security:
+        - accessCookie: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/MonitorId'
+      responses:
+        '200': { description: Monitor resumed }
+  /monitors/{id}/stats:
+    get:
+      tags: [Monitors]
+      summary: Read monitor statistics
+      parameters:
+        - $ref: '#/components/parameters/MonitorId'
+        - name: range
+          in: query
+          schema: { type: string, enum: [24h, 7d, 30d, 90d], default: 24h }
+      responses:
+        '200': { description: Uptime and latency statistics }
+  /monitors/{id}/export.csv:
+    get:
+      tags: [Monitors]
+      summary: Export check history
+      parameters:
+        - $ref: '#/components/parameters/MonitorId'
+      responses:
+        '200':
+          description: Check history CSV
+          content:
+            text/csv:
+              schema: { type: string }
+  /monitors/{id}/report.csv:
+    get:
+      tags: [Monitors]
+      summary: Export monitor rollup report
+      parameters:
+        - $ref: '#/components/parameters/MonitorId'
+      responses:
+        '200':
+          description: Aggregated report CSV
+          content:
+            text/csv:
+              schema: { type: string }
+  /public/status:
+    get:
+      tags: [Status]
+      summary: Public service status and uptime summaries
+      security: []
+      responses:
+        '200': { description: Public monitors and 24-hour, 7-day and 90-day uptime }
+  /public/incidents:
+    get:
+      tags: [Status]
+      summary: Public incident history
+      security: []
+      responses:
+        '200': { description: Resolved and ongoing public incidents }
+  /status:
+    get:
+      tags: [Status]
+      summary: Authenticated status snapshot
+      responses:
+        '200': { description: Latest results for monitors visible to the current user }
+  /polling-stats:
+    get:
+      tags: [Status]
+      summary: Adaptive polling statistics
+      responses:
+        '200': { description: User-scoped polling statistics }
+  /history:
+    get:
+      tags: [Monitors]
+      summary: Fetch recent check history
+      parameters:
+        - name: monitorId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: n
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 20 }
+      responses:
+        '200': { description: Recent metrics, newest first }
+        '403': { description: Monitor is not owned by the current user }
+  /monitors/{id}/maintenance:
+    parameters:
+      - $ref: '#/components/parameters/MonitorId'
+    get:
+      tags: [Maintenance]
+      summary: List maintenance windows
+      responses:
+        '200': { description: Maintenance windows for the monitor }
+    post:
+      tags: [Maintenance]
+      summary: Schedule a maintenance window
+      security:
+        - accessCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [starts_at, ends_at]
+              properties:
+                starts_at: { type: string, format: date-time }
+                ends_at: { type: string, format: date-time }
+                reason: { type: string, maxLength: 300 }
+      responses:
+        '201': { description: Maintenance window created }
+        '400': { description: Invalid dates, duration or reason }
+        '404': { description: Monitor not found or not visible }
+  /maintenance/{id}:
+    delete:
+      tags: [Maintenance]
+      summary: Delete a maintenance window
+      security:
+        - accessCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Maintenance window deleted }
+        '404': { description: Maintenance window not found or not visible }
+  /incidents:
+    get:
+      tags: [Incidents]
+      summary: List incidents for a monitor
+      parameters:
+        - name: monitorId
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - name: before
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        '200': { description: Ownership-scoped incidents }
+        '403': { description: Monitor is not owned by the current user }
+  /incidents/{id}/events:
+    get:
+      tags: [Incidents]
+      summary: Read incident lifecycle events
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Incident timeline }
+        '404': { description: Incident not found or not visible }
+  /incidents/{id}/acknowledge:
+    post:
+      tags: [Incidents]
+      summary: Acknowledge an open incident
+      security:
+        - accessCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Incident acknowledged }
+        '404': { description: Incident not found, not visible or already resolved }
+  /alert-channels:
+    get:
+      tags: [Alert channels]
+      summary: List alert channels
+      responses:
+        '200': { description: Channels; webhook URLs are masked in returned data }
+    post:
+      tags: [Alert channels]
+      summary: Create a Slack, Discord or generic webhook channel
+      security:
+        - accessCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, name, target_url]
+              properties:
+                type: { type: string, enum: [slack, discord, webhook] }
+                name: { type: string, minLength: 1, maxLength: 100 }
+                target_url: { type: string, format: uri }
+                enabled: { type: boolean, default: true }
+                events:
+                  type: array
+                  items: { type: string, enum: [down, recovered, anomaly, ssl_expiring] }
+      responses:
+        '201': { description: Channel created }
+        '400': { description: Validation or SSRF rejection }
+  /alert-channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    patch:
+      tags: [Alert channels]
+      summary: Update a channel
+      security:
+        - accessCookie: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                target_url: { type: string, format: uri }
+                enabled: { type: boolean }
+                events:
+                  type: array
+                  items: { type: string, enum: [down, recovered, anomaly, ssl_expiring] }
+      responses:
+        '200': { description: Updated channel }
+        '404': { description: Channel not found or not visible }
+    delete:
+      tags: [Alert channels]
+      summary: Delete a channel
+      security:
+        - accessCookie: []
+          csrfToken: []
+      responses:
+        '200': { description: Channel deleted }
+        '404': { description: Channel not found or not visible }
+  /alert-channels/{id}/test:
+    post:
+      tags: [Alert channels]
+      summary: Send a test notification
+      security:
+        - accessCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Test delivery result }
+        '404': { description: Channel not found or not visible }
+  /alert-channels/{id}/deliveries:
+    get:
+      tags: [Alert channels]
+      summary: Read recent delivery attempts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Last 50 delivery attempts }
+        '404': { description: Channel not found or not visible }
+components:
+  securitySchemes:
+    accessCookie:
+      type: apiKey
+      in: cookie
+      name: access_token
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+  parameters:
+    MonitorId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+  schemas:
+    Monitor:
+      type: object
+      properties:
+        id: { type: integer }
+        user_id: { type: integer }
+        name: { type: string }
+        url: { type: string, format: uri }
+        enabled: { type: boolean }
+        is_public: { type: boolean }
+        interval_seconds: { type: integer }
+        expected_status: { type: integer }
+        method: { type: string, enum: [GET, HEAD, POST] }
+    MonitorInput:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        url: { type: string, format: uri, description: HTTP or HTTPS URL; destination must resolve to public IP addresses }
+        interval_seconds: { type: integer, minimum: 5, maximum: 3600, default: 10 }
+        expected_status: { type: integer, minimum: 100, maximum: 599, default: 200 }
+        is_public: { type: boolean, default: false }
+        method: { type: string, enum: [GET, HEAD, POST], default: GET }
+        request_headers: { type: object, additionalProperties: { type: string }, description: Up to 50 validated request headers }
+        request_body: { type: string, maxLength: 1048576, nullable: true }
+        keyword: { type: string, maxLength: 500, nullable: true }
+        keyword_mode: { type: string, enum: [present, absent] }
+        timeout_ms: { type: integer, minimum: 1000, maximum: 30000, default: 5000 }
+        failure_threshold: { type: integer, minimum: 1, maximum: 10, default: 2 }
+        check_ssl: { type: boolean, default: true }

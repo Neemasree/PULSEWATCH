@@ -551,4 +551,5 @@ module.exports = {
   getSslState,
   // Expose for tests
   _monitorState: monitorState,
+  _checkMonitor: checkMonitor,
 };

@@ -243,7 +243,10 @@ async function seedDefaultMonitors(userId) {
       return 0;
     }
 
-    for (const [name, url] of samples) {
+    // The seed is only for an empty admin account and must still respect the
+    // configured per-user quota when an operator sets a small limit.
+    const seedSamples = samples.slice(0, getMaxMonitorsPerUser());
+    for (const [name, url] of seedSamples) {
       await db.query(
         `INSERT INTO monitors
            (user_id, name, url, interval_seconds, expected_status, enabled, is_public)
@@ -252,7 +255,7 @@ async function seedDefaultMonitors(userId) {
       );
     }
     await db.query("COMMIT");
-    return samples.length;
+    return seedSamples.length;
   } catch (err) {
     await db.query("ROLLBACK").catch(() => {});
     throw err;

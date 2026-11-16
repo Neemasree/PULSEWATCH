@@ -1,424 +1,607 @@
+<!--
+  PulseWatch README
+  Audience: recruiters, engineering interviewers, and developers evaluating the project.
+  Diagrams are Mermaid so they remain editable and render natively on GitHub.
+-->
+
 <div align="center">
 
 # ⚡ PulseWatch
 
-### Real-time uptime monitoring & incident response platform
+### Real-time uptime monitoring and incident response
 
-Adaptive polling · Z-score anomaly detection · Incident lifecycle · SSL & maintenance controls · Multi-channel alerts
+**Know when a service goes down. Understand what changed. Notify the right people.**
 
-[Placement demo & interview walkthrough](docs/PLACEMENT_DEMO.md)
+PulseWatch is a full-stack monitoring platform that checks HTTP/HTTPS endpoints, adapts its polling frequency to service health, detects unusual latency, tracks incidents, and delivers configurable alerts.
 
-<br/>
+<p>
+  <a href="https://github.com/Neemasree/PULSEWATCH/actions/workflows/ci.yml">
+    <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Neemasree/PULSEWATCH/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI">
+  </a>
+  <img alt="Tests" src="https://img.shields.io/badge/Jest-242%20passing-C21325?style=for-the-badge&logo=jest&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB">
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-20-339933?style=for-the-badge&logo=nodedotjs&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
+  <img alt="Redis" src="https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white">
+</p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/Neemasree/PULSEWATCH/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Neemasree/PULSEWATCH/actions)
-[![Tests](https://img.shields.io/badge/tests-Jest_%2B_Playwright-C21325?style=for-the-badge&logo=jest&logoColor=white)](#-testing--ci)
-
-![React](https://img.shields.io/badge/React_18-20232A?style=flat-square&logo=react&logoColor=61DAFB)
-![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat-square&logo=vite&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-339933?style=flat-square&logo=nodedotjs&logoColor=white)
-![Express](https://img.shields.io/badge/Express-000000?style=flat-square&logo=express&logoColor=white)
-![Socket.io](https://img.shields.io/badge/Socket.io-010101?style=flat-square&logo=socketdotio&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL_16-4169E1?style=flat-square&logo=postgresql&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis_7-DC382D?style=flat-square&logo=redis&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
-![Jest](https://img.shields.io/badge/Jest-C21325?style=flat-square&logo=jest&logoColor=white)
+<p>
+  <a href="#-product-overview">Product overview</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-key-engineering">Engineering</a> ·
+  <a href="#-run-locally">Run locally</a> ·
+  <a href="docs/PLACEMENT_DEMO.md">Placement walkthrough</a>
+</p>
 
 </div>
 
-<br/>
+---
+
+## Why PulseWatch?
+
+When a website or API becomes unavailable, teams need more than a simple ping. They need to know **which service failed, when the incident began, whether latency is degrading, who has acknowledged it, and whether the service has recovered**.
+
+PulseWatch brings those workflows into one dashboard:
+
+- Monitor HTTP and HTTPS endpoints with configurable request expectations.
+- Reduce unnecessary checks while services are healthy using adaptive polling.
+- Detect unusual response-time changes with a statistical Z-score baseline.
+- Turn repeated failures into a persistent incident with an auditable lifecycle.
+- Send event-filtered notifications to Slack, Discord, or a custom webhook.
+- Review uptime, latency, incidents, SSL expiry, and maintenance windows.
+
+### A measured efficiency result
+
+<div align="center">
+
+| **82%** | **188 vs 1,031** |
+|:---:|:---:|
+| Fewer checks in a local benchmark | Adaptive checks vs. a fixed 10-second polling baseline |
+
+</div>
+
+The benchmark used six healthy monitors and compared a local adaptive-polling run with a hypothetical fixed 10-second schedule. It represents steady-state healthy monitoring, not a guaranteed saving for every workload. Failing or anomalous monitors return to the faster base interval.
 
 ---
 
-## 📊 Results
+## Product overview
 
-| Metric | Value |
+| Area | What it does |
 |---|---|
-| **Check volume reduction** (adaptive vs fixed 10s polling) | **82%**: 188 adaptive checks vs 1,031 for the fixed baseline |
-| Automated tests | Backend Jest tests and browser end-to-end workflows run in GitHub Actions against PostgreSQL and Redis |
-| Anomaly detector | Dedicated tests for insufficient data, stable baselines, spikes, flat baselines and z-score boundaries |
+| **Live dashboard** | Shows monitor health, latest latency, anomaly indicators, polling statistics, and real-time updates |
+| **Monitor management** | Create, edit, pause, resume, and delete endpoint checks; configure method, expected status, request headers/body, keyword rules, timeout, and failure threshold |
+| **Monitor insights** | Review latency history, uptime, average latency, incident counts, SSL expiry, and CSV exports |
+| **Incident response** | Track incidents through Open → Acknowledged → Resolved and inspect the persisted event timeline |
+| **Alert channels** | Configure Slack, Discord, or generic webhooks with event filters, test delivery, and delivery history |
+| **Maintenance windows** | Schedule planned maintenance so checks are not counted in uptime rollups and incident/alert actions are suppressed during the window |
+| **Public status page** | Publish selected monitors and their current status and incident history without exposing private monitors |
 
-> Measured in a local run with 6 healthy monitors. The baseline is a hypothetical fixed 10-second poll, and the figure reflects steady state with healthy monitors; failing or anomalous monitors poll faster, which lowers the saving.
-
----
-
-## ✨ Features
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 📡 Monitoring
-- GET / HEAD / POST checks with custom headers and body
-- Expected status code, keyword present / absent checks
-- Configurable timeout and failure threshold
-- **Adaptive polling** that backs off while healthy
-- **Z-score anomaly detection** on latency
-- **SSL expiry checks** (alerts at 14, 7 and 1 days)
-- **Maintenance windows** that silence planned downtime
-
-</td>
-<td width="50%" valign="top">
-
-### 🚨 Incident response
-- Lifecycle: `OPEN → ACKNOWLEDGED → RESOLVED`
-- **One active incident per monitor**, enforced by a partial unique index
-- Stats: uptime %, MTTR, avg latency, p50 / p95 / p99
-- Hourly rollups in PostgreSQL
-- CSV export of checks and hourly reports
-- Public status page for chosen monitors
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🔔 Alerting
-- Slack, Discord and generic webhook channels
-- Per-channel event filters: `down` · `recovered` · `anomaly` · `ssl_expiring`
-- Test-send button and delivery log
-- Webhook destinations re-validated against SSRF
-
-</td>
-<td width="50%" valign="top">
-
-### 🔐 Security
-- JWT access + refresh in httpOnly cookies, **rotation**
-- Redis-backed **token blacklist** and **login lockout**
-- CSRF protection, Helmet, CORS allow-list, rate limiting
-- **SSRF and DNS-rebinding protection**
-- Ownership-scoped queries, per-user Socket.io rooms
-
-</td>
-</tr>
-</table>
-
----
-
-## 🏗️ Architecture
-
-### System overview
+### The monitoring lifecycle at a glance
 
 ```mermaid
 flowchart LR
-  subgraph CLIENT["🖥️ Client"]
-    UI["React + Vite<br/>Dashboard · Monitors · Alerts · Status page"]
-  end
-
-  subgraph API["🟢 API layer · Node + Express"]
-    direction TB
-    MW["Middleware<br/>Helmet · CORS · CSRF · rate limit · Zod"]
-    AUTH["Auth<br/>JWT rotation · RBAC · ownership checks"]
-    REST["REST routes<br/>monitors · incidents · alerts · stats"]
-    WS["Socket.io<br/>per-user rooms"]
-  end
-
-  subgraph ENGINE["⚙️ Monitoring engine"]
-    direction TB
-    POLL["Poller<br/>one adaptive timer per monitor"]
-    PING["Pinger<br/>SSRF-safe HTTP agent"]
-    ANOM["Anomaly detector<br/>z-score"]
-    INC["Incident manager<br/>state machine"]
-    SSL["SSL checker"]
-    NOTIF["Notifier<br/>alert channels"]
-  end
-
-  subgraph DATA["🗄️ Data layer"]
-    PG[("PostgreSQL<br/>users · monitors · incidents<br/>rollups · channels · maintenance")]
-    RD[("Redis<br/>recent checks · token blacklist<br/>lockout · delivery logs")]
-  end
-
-  subgraph EXT["🌐 External"]
-    SITES["Monitored websites"]
-    HOOKS["Slack · Discord · Webhooks"]
-  end
-
-  UI -->|"REST + cookies"| MW
-  MW --> AUTH --> REST
-  UI <-->|"live updates"| WS
-  REST <--> PG
-  AUTH <--> RD
-
-  POLL --> PING
-  PING -->|"HTTP checks"| SITES
-  PING --> ANOM
-  ANOM --> INC
-  POLL --> SSL
-  INC --> PG
-  INC --> NOTIF
-  SSL --> NOTIF
-  NOTIF -->|"alerts"| HOOKS
-  POLL --> RD
-  ANOM --> WS
-  INC --> WS
-
-  classDef client fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A,stroke-width:2px
-  classDef api fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:2px
-  classDef engine fill:#FEF3C7,stroke:#D97706,color:#78350F,stroke-width:2px
-  classDef pg fill:#E0E7FF,stroke:#4F46E5,color:#312E81,stroke-width:2px
-  classDef redis fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,stroke-width:2px
-  classDef ext fill:#F3E8FF,stroke:#9333EA,color:#581C87,stroke-width:2px
-
-  class UI client
-  class MW,AUTH,REST,WS api
-  class POLL,PING,ANOM,INC,SSL,NOTIF engine
-  class PG pg
-  class RD redis
-  class SITES,HOOKS ext
+    A["Configure endpoint"] --> B["Run HTTP / HTTPS check"]
+    B --> C{"Expected response?"}
+    C -->|"Healthy"| D["Update latency baseline"]
+    C -->|"Repeated failure"| E["Open incident"]
+    D --> F{"Latency anomaly?"}
+    F -->|"Yes"| G["Send anomaly alert"]
+    F -->|"No"| H["Schedule next adaptive check"]
+    G --> H
+    E --> I["Notify configured channels"]
+    I --> J["Acknowledge incident"]
+    J --> K["Detect recovery"]
+    K --> L["Resolve incident"]
+    L --> H
 ```
 
-> 🟦 client &nbsp; 🟩 API &nbsp; 🟨 monitoring engine &nbsp; 🟪 PostgreSQL / external &nbsp; 🟥 Redis
+---
 
-### What happens on every check
+## Architecture
+
+PulseWatch is organized around a React client, an Express API and monitoring process, and two complementary data stores. The backend currently runs the polling loops in-process; this is intentionally called out in the scaling limitations below.
+
+### 1. System architecture
+
+```mermaid
+flowchart TB
+    subgraph CLIENT["Client layer"]
+        USER["User / Operator"]
+        WEB["React 18 + Vite<br/>Dashboard · Monitors · Incidents · Alerts"]
+        USER --> WEB
+    end
+
+    subgraph SERVER["Node.js backend process"]
+        API["Express REST API"]
+        AUTH["Authentication & authorization<br/>JWT cookies · CSRF · ownership checks"]
+        SOCKET["Socket.IO gateway<br/>User-scoped live events"]
+        ENGINE["Adaptive polling engine<br/>One in-process timer per monitor"]
+        PINGER["HTTP pinger<br/>Response validation · safe DNS lookup"]
+        DETECTOR["Latency anomaly detector<br/>Z-score baseline"]
+        INCIDENT["Incident manager<br/>Failure threshold · lifecycle"]
+        SSL["TLS certificate checker"]
+        NOTIFIER["Notification dispatcher<br/>Slack · Discord · webhook"]
+        API --> AUTH
+        ENGINE --> PINGER
+        PINGER --> DETECTOR
+        DETECTOR --> INCIDENT
+        ENGINE --> SSL
+        INCIDENT --> NOTIFIER
+        API <--> SOCKET
+        ENGINE --> SOCKET
+        INCIDENT --> SOCKET
+    end
+
+    subgraph STORAGE["Persistence and fast data"]
+        PG[("PostgreSQL<br/>Users · Monitors · Incidents<br/>Event history · Maintenance · Rollups")]
+        REDIS[("Redis<br/>Recent check samples · Auth state<br/>Cooldowns · Delivery history")]
+    end
+
+    subgraph EXTERNAL["External systems"]
+        TARGET["Monitored websites / APIs"]
+        CHANNELS["Slack · Discord · Webhook endpoints"]
+    end
+
+    WEB <-->|"REST + secure cookies"| API
+    WEB <-->|"Socket.IO events"| SOCKET
+    PINGER -->|"Validated HTTP(S) requests"| TARGET
+    API <--> PG
+    AUTH <--> REDIS
+    ENGINE --> REDIS
+    ENGINE --> PG
+    NOTIFIER -->|"Filtered event payloads"| CHANNELS
+
+    classDef client fill:#E0F2FE,stroke:#0284C7,color:#0C4A6E
+    classDef service fill:#DCFCE7,stroke:#16A34A,color:#14532D
+    classDef storage fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95
+    classDef external fill:#FEF3C7,stroke:#D97706,color:#78350F
+    class WEB,USER client
+    class API,AUTH,SOCKET,ENGINE,PINGER,DETECTOR,INCIDENT,SSL,NOTIFIER service
+    class PG,REDIS storage
+    class TARGET,CHANNELS external
+```
+
+### 2. What happens during a monitor check?
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  participant P as ⏱️ Poller
-  participant H as 🌐 Pinger
-  participant S as 🌍 Target site
-  participant A as 📈 Anomaly detector
-  participant I as 🚨 Incident manager
-  participant DB as 🗄️ PostgreSQL
-  participant R as ⚡ Redis
-  participant N as 🔔 Notifier
-  participant U as 🖥️ Dashboard
+    autonumber
+    participant T as Adaptive timer
+    participant P as HTTP pinger
+    participant S as Target service
+    participant M as Maintenance lookup
+    participant R as Redis
+    participant A as Z-score detector
+    participant D as PostgreSQL
+    participant N as Notifier
+    participant UI as Dashboard
 
-  P->>H: run check for monitor
-  H->>S: HTTP request (DNS re-validated)
-  S-->>H: status, latency, body
-  H-->>P: result (up / down)
-  P->>R: store raw sample
-  P->>A: compare latency to rolling baseline
-  A-->>P: normal or anomaly (z-score above 3)
+    T->>P: Execute configured request
+    P->>S: HTTP / HTTPS request
+    S-->>P: Status, response time, response data
+    P-->>T: Check result
+    T->>M: Check active maintenance window
+    T->>A: Compare latency with recent baseline
+    T->>R: Store recent check sample
 
-  alt failure threshold reached
-    P->>I: open incident
-    I->>DB: INSERT (partial unique index prevents duplicates)
-    I->>N: send "down" alert
-  else recovered while incident active
-    P->>I: resolve incident
-    I->>DB: set resolved_at, duration
-    I->>N: send "recovered" alert
-  end
+    alt Maintenance window is active
+        Note over T,D: Keep the sample, but suppress uptime rollup and incident/alert actions
+    else Normal monitoring
+        T->>D: Upsert hourly uptime rollup
+        alt Latency anomaly detected
+            T->>N: Send anomaly event
+        end
+        alt Failure threshold reached
+            T->>D: Create or recover active incident
+            T->>N: Send down event
+        else Existing incident and service recovered
+            T->>D: Resolve incident and append event
+            T->>N: Send recovery event
+        end
+    end
 
-  P->>DB: upsert hourly rollup
-  P->>U: Socket.io update to owner room
-  P->>P: schedule next check (adaptive interval)
+    T-->>UI: Publish metric / incident update
 ```
 
-### Adaptive polling
+### 3. Adaptive polling strategy
+
+Each monitor has its own base interval. The interval increases gradually after healthy checks and returns to the base interval when the monitor is down or an anomaly is detected.
 
 ```mermaid
-flowchart LR
-  START(["Check completes"]) --> Q{"Result?"}
-  Q -->|"✅ Healthy"| UP["Interval × 1.5<br/>up to the cap"]
-  Q -->|"⚠️ Anomaly"| RESET["Reset to base interval"]
-  Q -->|"❌ Down"| RESET
-  UP --> NEXT(["Schedule next check"])
-  RESET --> NEXT
+flowchart TD
+    START(["Check completed"]) --> RESULT{"Check result"}
+    RESULT -->|"Healthy, normal latency"| GROW["Increase interval × 1.5"]
+    RESULT -->|"Latency anomaly"| RESET["Reset to monitor base interval"]
+    RESULT -->|"Down / unexpected response"| RESET
+    GROW --> CAP["Apply interval ceiling"]
+    CAP --> NEXT(["Schedule next check"])
+    RESET --> NEXT
+    NEXT --> START
 
-  classDef good fill:#DCFCE7,stroke:#16A34A,color:#14532D,stroke-width:2px
-  classDef warn fill:#FEF3C7,stroke:#D97706,color:#78350F,stroke-width:2px
-  classDef neutral fill:#E0E7FF,stroke:#4F46E5,color:#312E81,stroke-width:2px
-  class UP good
-  class RESET warn
-  class START,NEXT,Q neutral
+    classDef good fill:#DCFCE7,stroke:#16A34A,color:#14532D
+    classDef caution fill:#FEF3C7,stroke:#D97706,color:#78350F
+    classDef neutral fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A
+    class GROW,CAP good
+    class RESET caution
+    class START,RESULT,NEXT neutral
 ```
 
-A healthy monitor settles at the cap (60 s with the default base), a saving of about 1 − 10/60 ≈ 83% against a fixed 10 s baseline. Any anomaly or failure drops it straight back to the fast interval, so problems are never watched slowly.
+**Polling rules implemented in the backend:**
 
-### Incident lifecycle
+- Base interval is at least **5 seconds**.
+- Each healthy check multiplies the current interval by **1.5**.
+- The interval is capped at the greater of **60 seconds** or the configured base interval.
+- A down result or a latency anomaly resets the interval to the monitor's base.
+- A check is considered healthy only when its HTTP status matches the monitor's configured expected status and no request/keyword failure was reported.
+
+### 4. Incident lifecycle
 
 ```mermaid
 stateDiagram-v2
-  [*] --> OPEN: failure threshold reached
-  OPEN --> ACKNOWLEDGED: user acknowledges
-  OPEN --> RESOLVED: monitor recovers
-  ACKNOWLEDGED --> RESOLVED: monitor recovers
-  RESOLVED --> [*]
+    [*] --> OPEN: Failure threshold reached
+    OPEN --> ACKNOWLEDGED: Operator acknowledges
+    OPEN --> RESOLVED: Service recovers
+    ACKNOWLEDGED --> RESOLVED: Service recovers
+    RESOLVED --> [*]
 
-  classDef open fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
-  classDef ack fill:#FEF3C7,stroke:#D97706,color:#78350F
-  classDef done fill:#DCFCE7,stroke:#16A34A,color:#14532D
-  class OPEN open
-  class ACKNOWLEDGED ack
-  class RESOLVED done
+    note right of OPEN
+      One active incident per monitor
+      is enforced by a PostgreSQL
+      partial unique index.
+    end note
 ```
 
-A partial unique index on `incidents(monitor_id) WHERE status IN ('OPEN','ACKNOWLEDGED')` guarantees at most one active incident per monitor, even if two checks race.
+Incident records and lifecycle events are stored in PostgreSQL. The database constraint prevents two concurrent active incidents for the same monitor; the in-memory poller state is only a fast runtime guard.
+
+### 5. Persistent data model
+
+```mermaid
+erDiagram
+    USERS ||--o{ MONITORS : owns
+    USERS ||--o{ ALERT_CHANNELS : configures
+    MONITORS ||--o{ INCIDENTS : records
+    INCIDENTS ||--o{ INCIDENT_EVENTS : contains
+    MONITORS ||--o{ CHECK_ROLLUPS : aggregates
+    MONITORS ||--o{ MAINTENANCE_WINDOWS : schedules
+    USERS o|--o{ INCIDENTS : acknowledges
+
+    USERS {
+        int id PK
+        string username
+        string password_hash
+        string role
+    }
+    MONITORS {
+        int id PK
+        int user_id FK
+        string name
+        string url
+        int interval_seconds
+        int expected_status
+        boolean enabled
+        boolean is_public
+    }
+    INCIDENTS {
+        int id PK
+        int monitor_id FK
+        string status
+        timestamp started_at
+        timestamp acknowledged_at
+        timestamp resolved_at
+        int acknowledged_by FK
+        int duration_ms
+    }
+    INCIDENT_EVENTS {
+        bigint id PK
+        int incident_id FK
+        string event_type
+        int actor_user_id FK
+        jsonb metadata
+        timestamp created_at
+    }
+    CHECK_ROLLUPS {
+        int monitor_id PK, FK
+        timestamp hour PK
+        int total
+        int up
+        bigint sum_ms
+    }
+    ALERT_CHANNELS {
+        int id PK
+        int user_id FK
+        string type
+        string target_url
+        jsonb events
+        boolean enabled
+    }
+    MAINTENANCE_WINDOWS {
+        int id PK
+        int monitor_id FK
+        timestamp starts_at
+        timestamp ends_at
+        string reason
+    }
+```
+
+**Storage choices:** PostgreSQL is the durable source for accounts, monitor configuration, incidents, event history, maintenance windows, alert-channel configuration, and hourly rollups. Redis holds recent high-frequency check samples and short-lived or operational state such as token revocation, login lockout, alert cooldowns, and recent delivery history.
 
 ---
 
-## 🧠 Design decisions
+## Key engineering
 
-<details>
-<summary><b>Why PostgreSQL and Redis together?</b></summary>
-<br/>
+### Monitoring and anomaly detection
 
-Configuration, incidents and aggregated history must be durable and queryable, so they live in PostgreSQL. High-frequency raw samples, auth state with TTLs and delivery logs suit Redis. Raw checks are not stored in PostgreSQL; they are rolled up hourly to keep the database small. Percentiles use the latest 500 Redis samples, while uptime and averages come from hourly rollups.
-</details>
+- Supports configurable HTTP request methods, headers, request bodies, expected status codes, timeouts, failure thresholds, and keyword validation.
+- Uses a rolling in-memory window of recent successful response times for the anomaly baseline.
+- Requires at least 10 historical readings before evaluating an anomaly.
+- Computes the Z-score: (z = \frac{x - \mu}{\sigma}\).
+- Flags a reading when the absolute Z-score is greater than 3.
+- Handles insufficient history and a zero-standard-deviation baseline explicitly.
 
-<details>
-<summary><b>Why gradual back-off for adaptive polling?</b></summary>
-<br/>
+The detector is intentionally understandable and testable as a pure function. Its statistical trade-offs are documented below.
 
-Jumping straight to a long interval would leave a blind spot just after recovery. Growing by ×1.5 per healthy check (similar to TCP slow-start) cuts load quickly while still reacting fast: any anomaly or failure resets to the base interval.
-</details>
+### Incident correctness and recovery
 
-<details>
-<summary><b>Why enforce incident uniqueness in the database?</b></summary>
-<br/>
+- Repeated failures must reach the monitor's configured failure threshold before a confirmed outage is recorded.
+- A partial unique index on active incident statuses enforces one active incident per monitor at the database layer.
+- Active incidents are reloaded from PostgreSQL so restart recovery does not rely only on volatile memory.
+- Open, acknowledged, and resolved actions are appended to a queryable incident event timeline.
+- Maintenance windows suppress incident and alert actions and are excluded from hourly uptime rollups.
 
-Application-level "check then insert" logic can race. A partial unique index makes duplicate active incidents impossible regardless of timing or the number of workers.
-</details>
+### Real-time dashboard
 
-<details>
-<summary><b>Why keep auth state in Redis?</b></summary>
-<br/>
+- Socket.IO delivers monitor metrics, polling statistics, monitor changes, and incident updates.
+- User data is emitted to owner-scoped rooms; admin updates use the explicit admin room.
+- The dashboard combines live events with API-loaded monitor configuration.
+- The monitor detail view includes latency history and selectable 24-hour, 7-day, 30-day, and 90-day statistics.
 
-The refresh-token blacklist and login lockout counters use Redis keys with TTLs, so a restart never revives a revoked token or resets a lockout.
-</details>
+### Alerts and SSL monitoring
 
-<details>
-<summary><b>How is SSRF handled?</b></summary>
-<br/>
-
-User-supplied URLs (monitors and webhook destinations) are validated on save and again on use. Private, loopback and link-local addresses are rejected, and DNS is checked at connection time to defeat rebinding.
-</details>
-
----
-
-## 🚀 Getting started
-
-### With Docker (recommended)
-
-```bash
-git clone https://github.com/Neemasree/PULSEWATCH.git
-cd PULSEWATCH
-cp backend/.env.example backend/.env
-# edit backend/.env: set JWT secrets, ADMIN_USERNAME and ADMIN_PASSWORD
-docker compose up --build
-```
-
-| Service | URL |
+| Event | Description |
 |---|---|
-| Dashboard | http://localhost:8080 |
-| Backend API | http://localhost:3000 |
+| `down` | Monitor reaches its configured failure threshold |
+| `recovered` | A previously active incident is resolved |
+| `anomaly` | A successful response has an anomalous latency reading |
+| `ssl_expiring` | HTTPS certificate reaches the 14-, 7-, or 1-day warning threshold |
 
-Generate each JWT secret with:
+Alert channels support **Slack**, **Discord**, and **generic webhooks**. Users can select event types, enable or disable a channel, send a test notification, and inspect recent delivery history. Webhook delivery retries failed attempts up to three times.
 
-```bash
-node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-```
+### Security and privacy
 
-### Without Docker
+Security controls are applied on both the API and outbound monitoring paths:
 
-```bash
-# backend (needs PostgreSQL and Redis running)
-cd backend
-cp .env.example .env
-# keep ALLOWED_ORIGIN=http://localhost:5173,http://localhost:8080 for local use
-# set JWT secrets and ADMIN_USERNAME / ADMIN_PASSWORD
-npm ci
-npm run migrate
-npm run dev
-
-# frontend
-cd frontend && npm install && npm run dev
-```
-
-<details>
-<summary><b>Environment variables</b></summary>
-<br/>
-
-| Variable | Description |
-|---|---|
-| `PORT` | Backend port (default 3000) |
-| `NODE_ENV` | `development` or `production` |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `DATABASE_SSL` | Set to `false` to disable TLS (normally only for local Postgres) |
-| `DATABASE_SSL_REJECT_UNAUTHORIZED` | Defaults to `true` for hosted Postgres; set to `false` only when a provider requires a custom/self-signed CA |
-| `REDIS_URL` or `REDIS_HOST` / `REDIS_PORT` | Redis connection |
-| `ALLOWED_ORIGIN` | Frontend origin(s) for CORS, comma-separated |
-| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | Required in production, use different values |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Bootstrap admin, created only if none exists |
-| `TRUST_PROXY` | `false` locally, `1` behind Render / Vercel |
-| `SLACK_WEBHOOK_URL` | Optional legacy fallback alert destination |
-
-</details>
+- JWT access and refresh tokens are stored in **httpOnly cookies**; refresh tokens rotate and are consumed atomically.
+- CSRF validation protects browser state-changing requests.
+- Login and registration endpoints use rate limits; account lockout adds a separate credential-abuse control.
+- Passwords are hashed with bcrypt.
+- Helmet security headers and an explicit CORS allow-list protect the API boundary.
+- User-owned monitor, incident, and alert-channel queries are ownership-scoped; admin access is checked server-side.
+- Socket.IO messages are separated into owner/admin rooms.
+- User-supplied monitor and webhook URLs are checked against private and special-use IP ranges; DNS is revalidated at connection time and redirects are disabled to reduce SSRF and DNS-rebinding risk.
+- Request bodies, outbound response sizes, and custom request headers have explicit limits.
+- PostgreSQL TLS certificate verification is enabled by default for hosted database connections.
 
 ---
 
-## 🔌 API overview
+## Technology stack
 
-OpenAPI docs are served at `/api/docs` (open in development, admin-only in production).
-
-<details>
-<summary><b>Show routes</b></summary>
-<br/>
-
-| Area | Routes |
-|---|---|
-| Auth | `POST /api/auth/register`, `/login`, `/refresh`, `/logout`, `GET /api/auth/me` |
-| Monitors | `GET/POST /api/monitors`, `GET/PATCH/DELETE /api/monitors/:id`, `POST /:id/pause`, `POST /:id/resume` |
-| Monitor data | `GET /api/monitors/:id/stats`, `/export.csv`, `/report.csv`, `GET /api/history?monitorId=`, `GET /api/status` |
-| Incidents | `GET /api/incidents`, `GET /api/incidents/:id/events`, `POST /api/incidents/:id/acknowledge` |
-| Alert channels | `GET/POST /api/alert-channels`, `PATCH/DELETE /:id`, `POST /:id/test`, `GET /:id/deliveries` |
-| Maintenance | `GET/POST /api/monitors/:id/maintenance`, `DELETE /api/maintenance/:id` |
-| Public | `GET /api/public/status`, `GET /api/public/incidents` |
-| Health | `GET /health`, `GET /api/health` |
-
-**Socket.io events (server to client):** `initial-data`, `metric-update`, `polling-stats`, `incident-update`, and `monitors-updated`. User data updates are sent to the owning user's room; admin-wide updates are sent to the admin room.
-
-</details>
-
----
-
-## 🎤 Placement demo
-
-See [docs/PLACEMENT_DEMO.md](docs/PLACEMENT_DEMO.md) for a 3–5 minute product walkthrough, local run commands, architecture talking points, trade-offs and interview questions.
-
----
-
-## 🧪 Testing & CI
-
-```bash
-cd backend
-npm test                 # unit + integration tests
-npm test -- --coverage   # local coverage report
-```
-
-The backend tests cover monitor CRUD and validation, ownership scoping, incident lifecycle and recovery, Redis-backed authentication, concurrent refresh replay, alert delivery, SSRF/IPv6 protections, polling behavior, request limits and anomaly detection.
-
-GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request. It starts PostgreSQL 16 and Redis 7 service containers, applies migrations, runs the backend Jest suite, builds the frontend, and exercises browser workflows with Playwright.
-
----
-
-## ☁️ Deployment
-
-| Part | Platform | Notes |
+| Layer | Technologies | Responsibility |
 |---|---|---|
-| Frontend | Vercel | `vercel.json` rewrites all routes to `index.html` |
-| Backend | Render | `render.yaml` provisions the web service, PostgreSQL and Redis with generated JWT secrets and a `/health` check |
-
-> Free-tier instances sleep when idle, which pauses background polling. Use an always-on instance for continuous monitoring.
+| Frontend | React 18, Vite, React Router | Dashboard, monitor management, incident and alert views, public status page |
+| Charts | Chart.js, react-chartjs-2 | Latency and monitoring visualizations |
+| Backend | Node.js 20, Express 4 | REST API, authentication, validation, monitor orchestration |
+| Real-time | Socket.IO | Live metrics and incident events |
+| Relational data | PostgreSQL 16, node-postgres | Durable application data and hourly rollups |
+| Fast state | Redis 7, ioredis | Recent metrics, auth state, cooldowns, delivery history |
+| HTTP checks | Axios, Node HTTP agents | Endpoint checks and outbound notifications |
+| Validation & security | Zod, Helmet, CORS, bcrypt, JWT | Input validation, secure sessions, API protection |
+| API documentation | OpenAPI 3.0, Swagger UI | Contract and interactive endpoint reference |
+| Infrastructure | Docker, Docker Compose, Nginx | Repeatable local multi-service environment |
+| Quality | Jest, Supertest, Playwright, GitHub Actions | Unit/integration tests, browser workflows, CI |
 
 ---
 
-## ⚠️ Known limitations and current scope
+## API overview
 
-- **Single-instance polling:** polling still runs in-process with `setTimeout`. Do not scale the backend horizontally until polling ownership is coordinated through a shared scheduler/queue (for example, BullMQ) or a distributed lease.
-- **Anomaly model:** Z-score detection can be sensitive to skewed latency distributions and small samples. MAD or EWMA is a future improvement; review alerts against your workload before treating them as definitive.
-- **Email alerts:** email delivery is not implemented. Current supported alert channels are Slack, Discord and generic webhooks.
-- **Redis outage behavior:** down-alert cooldown acquisition fails open if Redis is unavailable, prioritizing outage notifications over duplicate suppression during the outage.
-- **MTTA definition:** MTTA is currently calculated from the incident's `started_at` to `acknowledged_at`; incidents that have not been acknowledged have a null MTTA. This is a duration, not a pre-aggregated service-level metric.
+The API is rooted at `/api`. The version-controlled OpenAPI contract is in [`backend/openapi.yaml`](backend/openapi.yaml), with Swagger UI served at `/api/docs` (production access is restricted to admins).
 
-The Redis-backed cooldown is shared across backend processes, and incident lifecycle events are persisted in PostgreSQL and available through the ownership-scoped `GET /api/incidents/:id/events` endpoint. These features do not make the polling scheduler multi-instance safe.
+| Area | Representative endpoints | Purpose |
+|---|---|---|
+| Authentication | `POST /auth/register`, `/login`, `/refresh`, `/logout`; `GET /auth/me` | Account creation, secure session lifecycle |
+| Monitors | `GET/POST /monitors`, `GET/PATCH/DELETE /monitors/{id}` | Manage endpoint configuration |
+| Monitor controls | `POST /monitors/{id}/pause`, `/resume` | Control polling |
+| Statistics | `GET /monitors/{id}/stats`, `/export.csv`, `/report.csv` | Read metrics and export reports |
+| Incidents | `GET /incidents`, `/incidents/{id}/events`, `POST /incidents/{id}/acknowledge` | Incident history and response |
+| Maintenance | `GET/POST /monitors/{id}/maintenance`, `DELETE /maintenance/{id}` | Planned maintenance windows |
+| Alert channels | `GET/POST /alert-channels`, `PATCH/DELETE /alert-channels/{id}` | Manage notification destinations |
+| Public status | `GET /public/status`, `/public/incidents` | Expose only explicitly public monitors |
+| Health | `GET /health`, `/api/health` | Service health checks |
+
+---
+
+## Run locally
+
+### Option A — Docker Compose (recommended)
+
+**Prerequisites:** Git, Docker Desktop / Docker Engine, and Docker Compose.
+
+1. Clone the repository and enter the project:
+
+   ```bash
+   git clone https://github.com/Neemasree/PULSEWATCH.git
+   cd PULSEWATCH
+   ```
+
+2. Create the backend environment file:
+
+   ```bash
+   cp backend/.env.example backend/.env
+   ```
+
+3. Edit `backend/.env` and set:
+   - `ADMIN_USERNAME` and `ADMIN_PASSWORD`
+   - `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` to two different random values
+
+   Generate a secret with:
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+   ```
+
+4. Start the complete local stack:
+
+   ```bash
+   docker compose up --build
+   ```
+
+5. Open the application:
+
+   | Service | Local address |
+   |---|---|
+   | PulseWatch dashboard | http://localhost:8080 |
+   | Backend health check | http://localhost:3000/health |
+   | Swagger UI | http://localhost:3000/api/docs |
+
+Docker Compose starts **React/Nginx, the Express API, PostgreSQL, and Redis**. Database migrations run during backend startup. The published container ports bind to loopback for local development.
+
+To stop the stack:
+
+```bash
+docker compose down
+```
+
+### Option B — Run frontend and backend separately
+
+**Prerequisites:** Node.js 20, npm, PostgreSQL 16, and Redis 7.
+
+1. Start PostgreSQL and Redis, then configure their local connection values in `backend/.env`.
+2. Install and start the backend:
+
+   ```bash
+   cd backend
+   cp .env.example .env
+   npm ci
+   npm run migrate
+   npm run dev
+   ```
+
+3. In a second terminal, install and start the frontend:
+
+   ```bash
+   cd frontend
+   npm ci
+   npm run dev
+   ```
+
+4. Open http://localhost:5173.
+
+The local Vite origin is included in the example CORS configuration. Set the database credentials, Redis connection, admin bootstrap credentials, and two distinct JWT secrets in the environment file before starting.
+
+### Useful environment variables
+
+| Variable | Purpose |
+|---|---|
+| `PORT` | API port (default: 3000) |
+| `NODE_ENV` | Runtime environment |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `DATABASE_SSL_REJECT_UNAUTHORIZED` | PostgreSQL TLS certificate verification (enabled by default) |
+| `REDIS_URL` or `REDIS_HOST` / `REDIS_PORT` | Redis connection |
+| `ALLOWED_ORIGIN` | Comma-separated frontend origins |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | Distinct JWT signing secrets |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | First admin account bootstrap |
+| `TRUST_PROXY` | Explicit trusted proxy configuration |
+| `MAX_MONITORS_PER_USER` | Per-user monitor quota |
+| `SLACK_WEBHOOK_URL` | Optional legacy Slack webhook destination |
+
+See [`backend/.env.example`](backend/.env.example) for the complete configuration reference. Never commit real credentials or webhook URLs.
+
+---
+
+## Testing and continuous integration
+
+The GitHub Actions workflow runs on pushes and pull requests. It provisions PostgreSQL and Redis service containers and validates the application in separate jobs.
+
+| CI job | What it verifies |
+|---|---|
+| **Backend tests and frontend build** | Applies migrations, runs Jest, and creates the Vite production build |
+| **Browser end-to-end workflows** | Starts the API and frontend, then exercises real browser flows with Playwright |
+
+The latest successful run recorded **242 passing Jest tests across 24 suites**, alongside a successful frontend build and browser end-to-end workflow.
+
+[![Latest CI run](https://img.shields.io/badge/Latest%20CI-Passing-brightgreen?style=flat-square&logo=githubactions)](https://github.com/Neemasree/PULSEWATCH/actions)
+
+Run checks locally:
+
+```bash
+# Backend unit and integration tests
+cd backend
+npm ci
+npm test
+
+# Frontend production build
+cd ../frontend
+npm ci
+npm run build
+```
+
+Test coverage includes authentication and CSRF, monitor CRUD and ownership, polling behavior, incidents and recovery, alert delivery, anomaly detection, SSL checks, request hardening, and SSRF protections.
+
+---
+
+## Engineering decisions and trade-offs
+
+| Decision | Why it was chosen | Trade-off |
+|---|---|---|
+| PostgreSQL + Redis | Durable relational records and hourly aggregates belong in PostgreSQL; recent samples and expiring operational state fit Redis | The application must handle Redis availability separately from durable database state |
+| Adaptive polling | Healthy services need fewer requests; suspicious or failed services need faster follow-up checks | Polling state is currently process-local and requires coordination before horizontal scaling |
+| Database-enforced active incident uniqueness | A partial unique index protects against concurrent duplicate incident creation | The application must handle unique-constraint conflicts by recovering the existing incident |
+| Hourly rollups | Long-range uptime summaries do not depend on the short recent-sample window | Historical charts are aggregated rather than storing every raw check indefinitely in PostgreSQL |
+| Z-score anomaly detection | A small, explainable detector is easy to test and reason about | It is sensitive to small samples and skewed latency distributions |
+| Cookie-based sessions + CSRF | httpOnly cookies reduce direct JavaScript access to session tokens | Browser mutations must send the CSRF header and the frontend must use credentialed requests |
+
+---
+
+## Known limitations and next engineering steps
+
+PulseWatch is a strong full-stack project and is suitable for a technical walkthrough. The following are explicit boundaries—not features that should be claimed as complete:
+
+1. **Single-instance polling:** checks are scheduled with in-process timers. Do not run multiple backend replicas for the same monitor set until a distributed queue or lease-based scheduler assigns one owner per monitor.
+2. **Anomaly model:** the current detector uses Z-score. Median absolute deviation (MAD) or EWMA could improve robustness for skewed latency distributions and changing baselines.
+3. **Email notifications:** email delivery is not implemented. Supported alert channels are Slack, Discord, and generic webhooks.
+4. **Redis outage behavior:** down-alert cooldown acquisition fails open when Redis is unavailable, prioritizing the outage notification path; duplicate alerts may occur during a Redis outage.
+5. **Deployment validation:** Docker Compose and CI are provided, but live-host deployment behavior has not been validated as part of this project pass.
+
+### Future improvements
+
+- Move the polling scheduler to BullMQ or a distributed lease-backed worker model.
+- Add idempotent notification delivery and stronger retry observability.
+- Evaluate MAD/EWMA anomaly detection against representative latency distributions.
+- Add email notifications and operational dashboards for queue and worker health.
+- Run a production deployment with managed PostgreSQL/Redis and verify TLS, proxy, secrets, and uptime behavior.
+
+---
+
+## Placement walkthrough
+
+For a concise live demonstration and interview preparation, see **[`docs/PLACEMENT_DEMO.md`](docs/PLACEMENT_DEMO.md)**. It includes a 3–5 minute demo flow, architecture talking points, key trade-offs, local run commands, and questions worth rehearsing.
+
+### Suggested 3-minute demo
+
+1. Sign in and show the dashboard's live monitor states and adaptive polling statistics.
+2. Open a monitor and explain expected-status validation, latency history, and uptime ranges.
+3. Show an incident's lifecycle and persisted event timeline.
+4. Configure a webhook channel, select events, and demonstrate the test-send and delivery history.
+5. Open the public status page and explain why only explicitly public monitors appear.
 
 ---
 
 <div align="center">
 
-Built by **[Neema Sree K](https://github.com/Neemasree)** · See [LICENSE](LICENSE)
+**Built to make service health visible and incident response explainable.**
+
+[Repository](https://github.com/Neemasree/PULSEWATCH) ·
+[CI workflows](https://github.com/Neemasree/PULSEWATCH/actions) ·
+[Placement walkthrough](docs/PLACEMENT_DEMO.md) ·
+[MIT License](LICENSE)
 
 </div>
